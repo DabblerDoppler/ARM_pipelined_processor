@@ -1,0 +1,24 @@
+`timescale 1ns/1ns
+
+
+module fullAdder (A, B, Cin, Cout, Sum);
+
+parameter delay = 50;
+
+input logic A, B, Cin;
+output logic Cout, Sum
+
+
+logic AXorB, AXorBAndCin, AAndB ;
+
+//sum = (A Xor B) Xor Cin
+xor #delay Xor1 (AXorB, A, B);
+xor #delay xor2 (sum, AXorB, Cin);
+
+
+//Cout = ((A Xor B) & Cin) | (A & B)
+and and1 (AXorBAndCin, AXorB, Cin);
+and and2 (AAndB, A, B);
+or or1 (Cout, AAndB, AXorBAndCin);
+
+endmodule

@@ -1,0 +1,20 @@
+`timescale 1ns/1ns
+
+module #(parameter WIDTH=64) bitwiseOr(A, B, out, carryOut, overflow);
+	input logic[WIDTH-1:0] A, B
+
+	output logic[WIDTH-1:0] out; 
+	output logic carryOut, overflow, zero, negative;
+	
+	genvar i;
+		
+	generate 
+			for(i=0; i<WIDTH; i++) begin : eachAndGate
+				or thisOr (out[i], A[i], .B[i]);
+			end
+	endgenerate
+
+	assign carryOut = 0; 
+	assign overflow = 0;
+
+endmodule

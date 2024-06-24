@@ -1,0 +1,29 @@
+module EqualityChecker_5 (in0, in1, out);
+
+	parameter delay = 50;
+	
+	input logic [4:0] in0, in1;
+	
+	output logic out;
+	
+	logic [4:0] temp; 
+	
+	genvar i;
+	
+	generate
+	
+		for(i=0; i < 5; i++) begin : eachEqualityCheck
+			xnor #delay (temp[i], in0[i], in1[i]);
+		end
+		
+	
+	endgenerate
+	
+	logic tempAnd;
+	
+	and #delay (tempAnd, temp[0], temp[1]);
+	
+	and #delay (out, tempAnd, temp[2], temp[3], temp[4]);
+	
+	
+endmodule

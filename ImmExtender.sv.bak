@@ -1,0 +1,16 @@
+module ImmExtender (in, sign, out);
+	input logic [63:0] in;
+	input logic sign; 
+	output logic [63:0] out;
+	
+	assign out[15:0] = in[15:0];
+	
+	mux2_1(.out[16], .i0(0), .i1(in[15]), .sel(sign));
+	
+	genvar i;
+	generate
+		for(i=17; i<64; i++) : ThisMuxInput
+			assign out[i] = out[16];
+		end
+	endgenerate
+endmodule

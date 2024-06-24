@@ -1,0 +1,27 @@
+`timescale 1ns/1ns
+
+module #(parameter WIDTH=64) inverter(in, out);
+	input logic [WIDTH-1:0] in;
+	output logic [WIDTH-1:0] out;
+
+	genvar i;
+
+	logic [WIDTH-1:0] Nin, internalCarry, sum;
+	
+	fullAdder firstAdder(.A(Nin[0]), .B(0), .Cin(1), Cout(internalCarry[0]), .sum(out[0]));
+
+	generate
+		for(i=0; i < WIDTH; i++) begin : eachLoop
+			//invert the bits
+			not #delay thisNot(Nin[i], in[i]);
+		end
+		
+		for(i=0; i < WIDTH; i++) begin : eachLoop
+			//add one
+			fullAdder thisAdder(.A(Nin[i]), .B(0), .Cin(internalCarry[i-1]), .Cout(internalCarry[i], .sum(out[i]));
+		end
+		
+	endgenerate
+
+
+endmodule

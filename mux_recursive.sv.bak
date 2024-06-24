@@ -1,0 +1,6 @@
+module mux_recursive #(parameter WIDTH=32) (in, read, out);
+	input logic [WIDTH-1:0]	in;
+	var temp = $clog2(WIDTH);
+	input logic [temp:0] read;
+	output logic out;
+	
