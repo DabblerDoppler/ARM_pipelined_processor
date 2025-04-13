@@ -1,1075 +1,975 @@
+//====================================================================================
+// File: CPU.sv
+// Description: Pipelined CPU Implementation with Forwarding
+//====================================================================================
+// This module implements a 5-stage pipelined CPU with the following stages:
+// 1. Instruction Fetch (IF): Fetches instructions from instruction memory
+// 2. Register Fetch (RF): Reads operands from register file
+// 3. Execute (EX): Performs ALU operations or shift operations
+// 4. Memory (MEM): Accesses data memory for loads and stores
+// 5. Write Back (WB): Writes results back to register file
+//
+// The CPU supports the following ARM-like instructions:
+// - B: Unconditional branch
+// - B.LT: Branch if less than (negative ≠ overflow)
+// - CBZ: Compare and branch if zero
+// - ADDI: Add immediate
+// - ADDS: Add and set flags
+// - AND: Bitwise AND
+// - EOR: Exclusive OR
+// - LDUR: Load register
+// - LSR: Logical shift right
+// - STUR: Store register
+// - SUBS: Subtract and set flags
+//
+// The CPU includes a forwarding unit to handle data hazards, allowing for
+// back-to-back execution of dependent instructions without stalls in most cases.
+//====================================================================================
+
 `timescale 1ps/1ps
 
-module CPU(clock, reset);
-
-parameter delay = 50;
-
-input logic clock;
-
-input logic reset;
-
-logic [31:0] command;
-
-//control logic
-logic Reg2Loc, ALUSrc, MemToReg, ImmSize, RegWrite, MemWrite, BrTaken, UncondBr, LSRInUse, DEBUG, FlagsShouldSet;
-
-// cntrl			Operation						Notes:
-// 000:			result = B			value of overflow and carry_out unimportant
-// 010:			result = A + B
-// 011:			result = A - B
-// 100:			result = bitwise A & B		value of overflow and carry_out unimportant
-// 101:			result = bitwise A | B		value of overflow and carry_out unimportant
-// 110:			result = bitwise A XOR B	value of overflow and carry_out unimportant
-logic [2:0] ALUOp;
-
-//flags
-logic zeroFlag, tempZeroFlag, negativeFlag, tempNegativeFlag, overflowFlag, tempOverflowFlag, carryoutFlag, tempCarryOutFlag, CBZShouldBranch;
-
-
-
-
-
-//____________________________________________________________________________________INSTRUCTION STUFF________________________________________________________________________________
-
-logic [18:0] CondAddr19;
-logic [25:0] BrAddr26;
-
-
-//getting parts of the command necessary for variables in the instruction path.
-assign CondAddr19 =  command[23:5];
-assign BrAddr26 = command[25:0];
-
-logic [63:0] PC;
-
-
-
-logic [63:0] CondAddrExtended, BrAddrExtended,  ChosenAddr, ShiftedAddr, NextCountBranch, NextCount, NextAddr;
-
-//sign extend our two constant friends
-Sext #(.IMMLENGTH(19))  CondXtend (.in(CondAddr19), .isSigned(1'b1), .out(CondAddrExtended));
-Sext  #(.IMMLENGTH(26)) BrXtend (.in(BrAddr26), .isSigned(1'b1), .out(BrAddrExtended));
-
-
-
-genvar i;
-generate
-	for(i = 0; i < 64; i++) begin : eachBrAddrBit
-		mux2_1 BrAddrMux (.out(ChosenAddr[i]), .i0(CondAddrExtended[i]), .i1(BrAddrExtended[i]), .sel(UncondBr));
-	end
-endgenerate
-
-
-
-LinearShiftLeft #(.SHIFT(2)) AddrShifter (.in(ChosenAddr), .enable(1), .out(ShiftedAddr));
-
-//calculate the next address
-adder BranchAdder(.A(ShiftedAddr), .B(PC), .sum(NextCountBranch), .carryOut(), .overflow());
-adder CountAdder (.A(PC), .B(4), .sum(NextCount), .carryOut(), .overflow());
-
-generate
-	for(i = 0; i < 64; i++) begin : eachBrSelAddrBit
-		mux2_1 BrSelMux (.out(NextAddr[i]), .i0(NextCount[i]), .i1(NextCountBranch[i]), .sel(BrTaken));
-	end
-endgenerate
-
-register PCRegister(.clk(clock), .in(NextAddr), .reset(reset), .enable(1'b1), .out(PC));
-
-instructmem instructionMemory (.address(PC), .instruction(command), .clk(clock));
-
-
-
-
-//____________________________________________________________________________________DATA STUFF_____________________________________________________________________________________
-
-logic [63:0] DAddrExtended, Imm12Extended, WriteToRegister, ALU_B, Da, Db, ImmChoice, ALUResult, Dout, ALUMuxInput, LSRMuxInput;
-logic [8:0] DAddr9;
-logic [11:0] Imm12;
-
-logic [4:0] Rd, Rm, Rn, Ab;
-
-// _____________Pipeline data that might need to be declared early__________
-
-logic [63:0] IFOut, RFAOut, RFBOut, RFWOut, EXOut, EXBOut, EXWOut, MemOut, MemWOut; 
-
-logic [31:0] RFCommand, EXCommand, MemCommand, WBCommand;
-
-logic [4:0] RFRd, EXRd, MemRd, WBRd, RFRm, RFRn;
-
-logic RFRegWrite, RFMemWrite, RF, RFLSRInUse, RFMemToReg, RFReg2Loc, RFALUSrc, RFImmSize;
-
-logic [2:0] RFALUOp;
-
-logic EXRegWrite, EXMemWrite, EXMemToReg, EXReg2Loc, EX, EXLSRInUse;
-
-logic [2:0] EXALUOp;
-
-logic MemRegWrite, MemMemWrite, MemMemToReg, MemReg2Loc;
-
-logic WBRegWrite;
-
-logic [63:0] RF_Aa_Input, RF_Ab_Input;
-
-logic [8:0] RF_DAddr9;
-logic [11:0] RF_Imm12;
-
-
-//____________________________RegFetch_______________________
-
-//set up variables from the command for the datapath.
-assign Rd = command[4:0];
-assign Rm = command[20:16];
-assign Rn = command[9:5];
-
-logic [5:0] EXShAmt;
-
-assign EXShAmt = EXCommand[15:10];
-assign RF_DAddr9 = RFCommand[20:12];
-assign RF_Imm12 = RFCommand[21:10];
-
-
-generate
-	for(i = 0; i < 5; i++) begin : eachRegisterBit
-		mux2_1 aMux (.out(Ab[i]), .i0(RFRd[i]), .i1(RFRm[i]), .sel(Reg2Loc));
-	end
-endgenerate
-
-regfile RegisterFile (.clk(clock), .RegWrite(WBRegWrite), .WriteData(MemOut), .WriteRegister(MemWOut), .ReadData1(Da), .ReadData2(Db), .ReadRegister1(RFRn), .ReadRegister2(Ab), .reset(reset));
-
-//more sign extension
-//IMM12 should be unsigned
-Sext #(.IMMLENGTH(9)) DXtend  (.in(RF_DAddr9), .isSigned(1'b1), .out(DAddrExtended));
-Sext #(.IMMLENGTH(12)) Imm12Xtend (.in(RF_Imm12), .isSigned(1'b0), .out(Imm12Extended));
-
-
-//check if CBZ and/or BLT should branch
-//this might need to be put through a pipeline, not sure yet
-logic BLTShoudlBranch;
-
-assign CBZShouldBranch = zeroFlag;
-xor #delay (BLTShouldBranch, negativeFlag, overflowFlag);
-
-generate
-	for(i = 0; i < 64; i++) begin : eachDataBit
-		//not 100% sure RFImmSize should be here
-		mux2_1 ImmMux(.out(ImmChoice[i]), .i0(DAddrExtended[i]), .i1(Imm12Extended[i]), .sel(RFImmSize));
-		//
-		mux2_1 ALUBMux (.out(ALU_B[i]), .i0(RF_Ab_Input[i]), .i1(ImmChoice[i]), .sel(RFALUSrc));
-	end
-endgenerate
-
-
-//____________________________EXEC_______________________
-
-alu myALU(.A(RFAOut), .B(RFBOut), .cntrl(EXALUOp), .result(ALUMuxInput), .negative(tempNegativeFlag), .zero(tempZeroFlag), .overflow(tempOverflowFlag), .carry_out(tempCarryoutFlag));
-
-//this is for the LSR command
-LSR_64 myLSR(.in(RFAOut), .enable(EXShAmt), .out(LSRMuxInput));
-
-
-generate
-	for(i = 0; i < 64; i++) begin : eachALUorLSRBit
-		mux2_1 ALUBMux (.out(ALUResult[i]), .i0(ALUMuxInput[i]), .i1(LSRMuxInput[i]), .sel(EXLSRInUse));
-	end
-endgenerate
-
-//____________________________MEM_______________________
-
-//xfer size can be constant for this lab since we're always passing the same size value into and out of datamem
-//LDURB and other instructions will need logic in xfer_size.
-
-
-datamem DataMemory (.address(EXOut), .write_enable(MemMemWrite), .read_enable(MemMemToReg), .write_data(EXBOut), .clk(clock), .xfer_size(8), .read_data(Dout));
-
-generate
-	for(i = 0; i < 64; i++) begin : eachMemOrALUBit
-		mux2_1 MemOrALUMux(.out(WriteToRegister[i]), .i0(EXOut[i]), .i1(Dout[i]), .sel(MemMemToReg));
-	end
-endgenerate
-
-
-//______________________________________________________________________________________PIPELINING____________________________________________________________________________________
-
-
-logic pipelineEnable;
-
-not #delay (pipelineEnable, reset);
-
-//assign pipelineEnable = 1;
-
-
-//data pipeline
-
-logic [63:0] RFBypassOut;
-
-
-
-//end of RF
-register RFAReg (.clk(clock), .in(RF_Aa_Input), .reset(reset), .enable(pipelineEnable), .out(RFAOut));
-
-register RFBReg (.clk(clock), .in(ALU_B), .reset(reset), .enable(pipelineEnable), .out(RFBOut));
-
-register RFBypassReg (.clk(clock), .in(RF_Ab_Input), .reset(reset), .enable(pipelineEnable), .out(RFBypassOut));
-
-register RFWReg (.clk(clock), .in(RFRd), .reset(reset), .enable(pipelineEnable), .out(RFWOut));
-
-//end of EX
-register EXReg  (.clk(clock), .in(ALUResult), .reset(reset), .enable(pipelineEnable), .out(EXOut));
-
-register EXBReg (.clk(clock), .in(RFBypassOut), .reset(reset), .enable(pipelineEnable), .out(EXBOut));
-
-register EXWReg (.clk(clock), .in(RFWOut), .reset(reset), .enable(pipelineEnable), .out(EXWOut));
-
-
-//end of Mem
-register MemReg (.clk(clock), .in(WriteToRegister), .reset(reset), .enable(pipelineEnable), .out(MemOut));
-
-register MemWReg(.clk(clock), .in(EXWOut), .reset(reset), .enable(pipelineEnable), .out(MemWOut));
-
-
-
-//_______________command pipeline______________________
-
-//remember: 
-//Rd = command[4:0];
-//Rm = command[20:16];
-//Rn = command[9:5];
-
-//after pipelining
-//rd = RFCommand[4:0];
-
-
-assign RFRd = RFCommand[4:0];
-assign EXRd = EXCommand[4:0];
-assign MemRd = MemCommand[4:0];
-assign WBRd = WBCommand[4:0];
-
-
-assign RFRm = RFCommand[20:16];
-
-assign RFRn = RFCommand[9:5];
-
-
-
-//pass the command through the pipeline
-//by resetting to one instead of 0 I'm hoping the forwarding unit won't try to forward anything since
-//it'll always be at x31
-register_resetToOne RFCommandReg (.clk(clock), .in(command), .reset(reset), .enable(pipelineEnable), .out(RFCommand));
-
-register_resetToOne EXCommandReg (.clk(clock), .in(RFCommand), .reset(reset), .enable(pipelineEnable), .out(EXCommand));
-
-register_resetToOne MemCommandReg (.clk(clock), .in(EXCommand), .reset(reset), .enable(pipelineEnable), .out(MemCommand));
-
-register_resetToOne WBCommandReg (.clk(clock), .in(MemCommand), .reset(reset), .enable(pipelineEnable), .out(WBCommand));
-
-
-
-//__________________control logic pipeline____________________
-
-			/*
-			BrTaken = 0;
-			UncondBr = 0;
-			RegWrite = 0;
-			MemWrite = 0;
-			FlagsShouldSet = 0;
-			Reg2Loc = 0;
-			ALUSrc = 0;
-			LSRInUse = 0;
-			ALUOp = 3'b000;
-			MemToReg = 0;
-			ImmSize = 0;
-			*/
-
-//these still need to be passed to the appropriate spots
-//also many are unnecessary so it would be good to trim down on the hardware cost here
-
-//there's some jank here so these control signals are one label ahead of some shit
-
-register #(.WIDTH(1)) RFRegWriteReg        (.clk(clock), .in(RegWrite), .reset(reset), .enable(pipelineEnable), .out(RFRegWrite));
-register #(.WIDTH(1)) RFMemWriteReg        (.clk(clock), .in(MemWrite), .reset(reset), .enable(pipelineEnable), .out(RFMemWrite));
-register #(.WIDTH(1)) RFFlagsShouldSetReg  (.clk(clock), .in(FlagsShouldSet), .reset(reset), .enable(pipelineEnable), .out(RFFlagsShouldSet));
-register #(.WIDTH(1)) RFLSRInUseReg  		 (.clk(clock), .in(LSRInUse), .reset(reset), .enable(pipelineEnable), .out(RFLSRInUse));
-register #(.WIDTH(1)) RFMemToRegReg  		 (.clk(clock), .in(MemToReg), .reset(reset), .enable(pipelineEnable), .out(RFMemToReg));
-register #(.WIDTH(1)) RFReg2LocReg  		 (.clk(clock), .in(Reg2Loc), .reset(reset), .enable(pipelineEnable), .out(RFReg2Loc));
-//
-register #(.WIDTH(1)) RFALUSrcReg  		    (.clk(clock), .in(ALUSrc), .reset(reset), .enable(pipelineEnable), .out(RFALUSrc));
-register #(.WIDTH(1)) RFImmSizeReg  		 (.clk(clock), .in(ImmSize), .reset(reset), .enable(pipelineEnable), .out(RFImmSize));
-//
-register #(.WIDTH(3)) RFALUOpReg  			 (.clk(clock), .in(ALUOp), .reset(reset), .enable(pipelineEnable), .out(RFALUOp));
-
-
-register #(.WIDTH(1)) EXRegWriteReg        (.clk(clock), .in(RFRegWrite), .reset(reset), .enable(pipelineEnable), .out(EXRegWrite));
-register #(.WIDTH(1)) EXMemWriteReg        (.clk(clock), .in(RFMemWrite), .reset(reset), .enable(pipelineEnable), .out(EXMemWrite));
-register #(.WIDTH(1)) EXMemToRegReg  		 (.clk(clock), .in(RFMemToReg), .reset(reset), .enable(pipelineEnable), .out(EXMemToReg));
-register #(.WIDTH(1)) EXReg2LocReg  		 (.clk(clock), .in(RFReg2Loc), .reset(reset), .enable(pipelineEnable), .out(EXReg2Loc));
-register #(.WIDTH(1)) EXFlagsShouldSetReg  (.clk(clock), .in(RFFlagsShouldSet), .reset(reset), .enable(pipelineEnable), .out(EXFlagsShouldSet));
-register #(.WIDTH(1)) EXLSRInUseReg  		 (.clk(clock), .in(RFLSRInUse), .reset(reset), .enable(pipelineEnable), .out(EXLSRInUse));
-register #(.WIDTH(3)) EXALUOpReg  			 (.clk(clock), .in(RFALUOp), .reset(reset), .enable(pipelineEnable), .out(EXALUOp));
-
-
-
-register #(.WIDTH(1)) MemRegWriteReg       (.clk(clock), .in(EXRegWrite), .reset(reset), .enable(pipelineEnable), .out(MemRegWrite));
-register #(.WIDTH(1)) MemMemWriteReg       (.clk(clock), .in(EXMemWrite), .reset(reset), .enable(pipelineEnable), .out(MemMemWrite));
-register #(.WIDTH(1)) MemMemToRegReg  		 (.clk(clock), .in(EXMemToReg), .reset(reset), .enable(pipelineEnable), .out(MemMemToReg));
-register #(.WIDTH(1)) MemReg2LocReg  		 (.clk(clock), .in(EXReg2Loc), .reset(reset), .enable(pipelineEnable), .out(MemReg2Loc));
-
-
-
-register #(.WIDTH(1)) WBRegWriteReg        (.clk(clock), .in(MemRegWrite), .reset(reset), .enable(pipelineEnable), .out(WBRegWrite));
-
-
-
-
-//________________________Forwarding Unit____________________
-
-//Check if Rn (which goes into Aa) of Command (in the RF stage) is equal to Rd in each stage.
-
-logic EqOut_Rn_RF, EqOut_Rn_EX, EqOut_Rn_Mem;
-
-EqualityChecker_5 EQ_Rn_RF (.in0(RFRn), .in1(EXRd), .out(EqOut_Rn_RF));
-EqualityChecker_5 EQ_Rn_EX (.in0(RFRn), .in1(MemRd), .out(EqOut_Rn_EX));
-EqualityChecker_5 EQ_Rn_Mem (.in0(RFRn), .in1(WBRd), .out(EqOut_Rn_Mem));
-
-//Check if Rd, which goes into Ab when Reg2Loc is false, is equal to Rd in upcoming stages. 
-
-logic EqOut_Rd_RF, EqOut_Rd_EX, EqOut_Rd_Mem;
-
-EqualityChecker_5 EQ_Rd_RF (.in0(RFRd), .in1(EXRd), .out(EqOut_Rd_RF));
-EqualityChecker_5 EQ_Rd_EX (.in0(RFRd), .in1(MemRd), .out(EqOut_Rd_EX));
-EqualityChecker_5 EQ_Rd_Mem (.in0(RFRd), .in1(WBRd), .out(EqOut_Rd_Mem));
-
-//Check if Rm, which goes into Ab when Reg2Loc is false, is equal to Rd in each stage.
-
-logic EqOut_Rm_RF, EqOut_Rm_EX, EqOut_Rm_Mem;
-
-EqualityChecker_5 EQ_Rm_RF (.in0(RFRm), .in1(EXRd), .out(EqOut_Rm_RF));
-EqualityChecker_5 EQ_Rm_EX (.in0(RFRm), .in1(MemRd), .out(EqOut_Rm_EX));
-EqualityChecker_5 EQ_Rm_Mem (.in0(RFRm), .in1(WBRd), .out(EqOut_Rm_Mem));
-
-
-//general use logic that can be compared in liu of x31
-logic [4:0] DoNotWrite;
-
-assign DoNotWrite = 31;
-
-
-//___________________________Forwarding from Execution Phase____________________
-
-
-//If Rn is equal to Rd in the exec stage, and we're going to write with Rd, and Rn is not x31, use the output of the ALU instead of Rn. 
-
-logic RnCantWrite, RnCanWrite, Forward_RdExec_ToAa;
-
-EqualityChecker_5 IsRnX31 (.in0(RFRn), .in1(DoNotWrite), .out(RnCantWrite));
-
-not #delay (RnCanWrite, RnCantWrite);
-
-and #delay (Forward_RdExec_ToAa, RnCanWrite, EqOut_Rn_RF, EXRegWrite);
-
-//there should be a mux here to decide whether we use the default output or the forwarded output as ALU_A. Forward_RdExec_ToRn is the .sel of the mux.
-
-
-
-
-//If Rd is equal to Rd in the exec stage, and we're going to write with Rd(exec), and Rd is not X31, and Reg2Loc is false (we're using Rd as Ab), AND aluSrc is 0, then use the output of the ALU instead of Rd.
-//Otherwise, if Reg2Loc is 1, and Rm is equal to Rd in the exec stage, and we're going to write with Rd, and Rm is not X31, AND aluSrc is 0, then also use the output of the ALU instead of Rm.
-
-
-logic RdCantWrite, RdCanWrite, RmCantWrite, RmCanWrite, Forward_RdExec_ToRd, Forward_RdExec_ToRm, Forward_RdExec_ToAb;
-
-logic NotReg2Loc, NotALUSrc;
-
-EqualityChecker_5 IsRdX31 (.in0(RFRd), .in1(DoNotWrite), .out(RdCantWrite));
-
-not #delay (RdCanWrite, RdCantWrite);
-
-EqualityChecker_5 IsRmX31 (.in0(RFRm), .in1(DoNotWrite), .out(RmCantWrite));
-
-not #delay (RmCanWrite, RmCantWrite);
-
-not #delay (NotReg2Loc, RFReg2Loc);
-
-not #delay (NotALUSrc, RFALUSrc);
-
-
-and #delay (Forward_RdExec_ToRd, EqOut_Rd_RF, EXRegWrite, RdCanWrite, NotReg2Loc, NotALUSrc);
-
-and #delay (Forward_RdExec_ToRm, EqOut_Rm_RF, EXRegWrite, RmCanWrite, RFReg2Loc, NotALUSrc);
-
-or #delay (Forward_RdExec_ToAb, Forward_RdExec_ToRm, Forward_RdExec_ToRd);
-
-//need a mux here, same deal as above. 
-
-
-//___________________________Forwarding from Memory Stage____________________________
-
-
-//If Rn is equal to Rd in the Mem stage, and we're going to write with Rd, and Rn is not X31, use the result of the Mem stage instead of Rn as Aa.
-
-logic Forward_RdMem_ToAa;
-
-
-and #delay(Forward_RdMem_ToAa, RnCanWrite, EqOut_Rn_EX, MemRegWrite);
-
-
-//mux here please
-
-
-
-//If Rd is equal to Rd in the mem stage, and we're going to write with Rd(mem), and Rd is not X31, and Reg2Loc is false (we're using Rd as Ab), AND aluSrc is 0, then use the output of the mem stage instead of Rd.
-//Otherwise, if Reg2Loc is 1, and Rm is equal to Rd in the mem stage, and we're going to write with Rd, and Rm is not X31, AND aluSrc is 0, then also use the output of the mem stage instead of Rm.
-
-logic Forward_RdMem_ToRd, Forward_RdMem_ToRm, Forward_RdMem_ToAb;
-
-and #delay (Forward_RdMem_ToRd, EqOut_Rd_EX, MemRegWrite, RdCanWrite, NotALUSrc, NotReg2Loc);
-
-and #delay (Forward_RdMem_ToRm, EqOut_Rm_EX, MemRegWrite, RmCanWrite, NotALUSrc, Reg2Loc);
-
-or #delay (Forward_RdMem_ToAb, Forward_RdMem_ToRd, Forward_RdMem_ToRm);
-
-
-
-//Forwarding from WB stage
-//I thought this wasn't going to be necessary but my WB happens at the end of the clock cycle so apparently it is.
-
-logic Forward_RdWB_ToAa;
-
-and #delay (Forward_RdWB_ToAa, RnCanWrite, EqOut_Rn_Mem, WBRegWrite);
-
-logic Forward_RdWB_ToRd, Forward_RdWB_ToRm, Forward_RdWB_ToAb;
-
-and #delay (Forward_RdWB_ToRd, EqOut_Rd_Mem, WBRegWrite, RdCanWrite, NotALUSrc, NotReg2Loc);
-
-and #delay (Forward_RdWB_ToRm, EqOut_Rm_Mem, WBRegWrite, RmCanWrite, NotALUSrc, Reg2Loc);
-
-or #delay (Forward_RdWB_ToAb, Forward_RdWB_ToRd, Forward_RdWB_ToRm);
-
-
-
-//now, we need muxes to determine whether to use the forwarding from memory or exec. Exec takes precedence, so muxes using Forward_RdExec_ToAb and Forward_RdExec_ToAa as the sel should work.
-
-
-logic [63:0] ForwardingChoice_Aa, ForwardingChoice_Ab;
-
-
-//ALUResult is the result of the exec stage
-//WriteToRegister is the result of the Mem stage
-
-logic [63:0] MemWBForwardingChoice_Aa, MemWBForwardingChoice_Ab;
-
-logic MemWBForward_Aa, MemWBForward_Ab;
-
-//choose Mem or WB
-
-generate
-	for(i = 0; i < 64; i++) begin : eachMemWBForwardChoiceMux
-		mux2_1 Aa_ForwardChoice_Mux (.out(MemWBForwardingChoice_Aa[i]), .i0(MemOut[i]), .i1(WriteToRegister[i]), .sel(Forward_RdMem_ToAa));
-		mux2_1 Ab_ForwardChoice_Mux (.out(MemWBForwardingChoice_Ab[i]), .i0(MemOut[i]), .i1(WriteToRegister[i]), .sel(Forward_RdMem_ToAb));
-	end
-endgenerate
-
-mux2_1 MemWB_Aa_ForwardChoice_Mux_e (.out(MemWBForward_Aa), .i0(Forward_RdWB_ToAa), .i1(Forward_RdMem_ToAa), .sel(Forward_RdMem_ToAa));
-mux2_1 MemWB_Ab_ForwardChoice_Mux_e (.out(MemWBForward_Ab), .i0(Forward_RdWB_ToAb), .i1(Forward_RdMem_ToAb), .sel(Forward_RdMem_ToAb));
-
-//choose previous or Exec
-
-generate
-	for(i = 0; i < 64; i++) begin : eachForwardChoiceMux
-		mux2_1 Aa_ForwardChoice_Mux (.out(ForwardingChoice_Aa[i]), .i0(MemWBForwardingChoice_Aa[i]), .i1(ALUResult[i]), .sel(Forward_RdExec_ToAa));
-		mux2_1 Ab_ForwardChoice_Mux (.out(ForwardingChoice_Ab[i]), .i0(MemWBForwardingChoice_Ab[i]), .i1(ALUResult[i]), .sel(Forward_RdExec_ToAb));
-	end
-endgenerate
-
-//need to determine whether Exec or Mem stage was used for each
-
-logic Forward_Aa, Forward_Ab;
-
-//there's a cleaner way to do this but I don't have that kind of time to figure it out
-mux2_1 Aa_ForwardChoice_Mux_e (.out(Forward_Aa), .i0(MemWBForward_Aa), .i1(Forward_RdExec_ToAa), .sel(Forward_RdExec_ToAa));
-mux2_1 Ab_ForwardChoice_Mux_e (.out(Forward_Ab), .i0(MemWBForward_Ab), .i1(Forward_RdExec_ToAb), .sel(Forward_RdExec_ToAb));
-
-
-//default input for Aa is Da
-//default input for Ab is ALU_B
-
-
-generate
-	for(i = 0; i < 64; i++) begin : eachForwardMux
-		mux2_1 Aa_ForwardChoice_Mux (.out(RF_Aa_Input[i]), .i0(Da[i]), .i1(ForwardingChoice_Aa[i]), .sel(Forward_Aa));
-		mux2_1 Ab_ForwardChoice_Mux (.out(RF_Ab_Input[i]), .i0(Db[i]), .i1(ForwardingChoice_Ab[i]), .sel(Forward_Ab));
-	end
-endgenerate
-
-
-
-//____________________________________________________________________________________CONTROL LOGIC___________________________________________________________________________________
-
-
-typedef enum { RESET, B, BLT, CBZ, ADDI, ADDS, AND, EOR, LDUR, LSR, STUR, SUBS, ERROR } commands;
-
-commands commandType;
-
-//flag setters
-
-dff_with_enable zeroDFF(.clk(clock), .in(tempZeroFlag), .reset(reset), .enable(EXFlagsShouldSet), .out(zeroFlag));
-dff_with_enable coutDFF(.clk(clock), .in(tempCarryoutFlag), .reset(reset), .enable(EXFlagsShouldSet), .out(carryoutFlag));
-dff_with_enable negDFF(.clk(clock), .in(tempNegativeFlag), .reset(reset), .enable(EXFlagsShouldSet), .out(negativeFlag));
-dff_with_enable overflowDFF(.clk(clock), .in(tempOverflowFlag), .reset(reset), .enable(EXFlagsShouldSet), .out(overflowFlag));
-
-
-always_ff @(posedge clock) begin
-		if(reset) begin
-			PC = 0;
-			NextAddr = 0;
-			command = 32'b10010001000000000000001111111111;
-			DEBUG = 0;
-			zeroFlag = 0;
-			negativeFlag = 0;
-			overflowFlag = 0;
-			carryoutFlag = 0;
-		end
-
-end
-
-//main control logic
-//get ready for some nested case statements ((:
-//basically checks for the smallest length commands first
-always_comb begin
-
-
-		case(command[31:26])
-			6'b000101 : begin
-				//B
-				commandType = B;
-				RegWrite = 0;
-				MemWrite = 0;
-				BrTaken = 1;
-				UncondBr = 1;
-				FlagsShouldSet = 0;
-				
-				//don't cares
-				//all don't care's will be down one line in this format
-				Reg2Loc = 0;
-				ALUSrc = 0;
-				LSRInUse = 0;
-				ALUOp = 3'b000;
-				MemToReg = 0;
-				ImmSize = 0;
-				
-			end
-			default: begin
-				case(command[31:24])
-					8'b01010100 : begin
-						//B.LT
-						commandType = BLT;				
-						Reg2Loc = 0;
-						ALUSrc = 0;
-						RegWrite = 0;
-						MemWrite = 0;
-						LSRInUse = 0;
-						BrTaken = BLTShouldBranch;
-						UncondBr = 0;
-						FlagsShouldSet = 0;
-						ALUOp = 3'b000;
-						
-						
-						MemToReg = 0;
-						ImmSize = 0;
-					end
-					8'b10110100 : begin
-						//CBZ
-						commandType = CBZ;
-						Reg2Loc = 0;
-						ALUSrc = 0;
-						RegWrite = 0;
-						MemWrite = 0;
-						LSRInUse = 0;
-						FlagsShouldSet = 0;
-						BrTaken = CBZShouldBranch;
-						UncondBr = 0;
-						ALUOp = 3'b000;
-						
-						
-						MemToReg = 0;
-						ImmSize = 0;
-					end
-					default: begin
-						case(command[31:22])
-						10'b1001000100 : begin
-							//ADDI
-							commandType = ADDI;
-							Reg2Loc = 1;
-							ALUSrc = 1;
-							MemToReg = 0;
-							RegWrite = 1;
-							FlagsShouldSet = 0;
-							MemWrite = 0;
-							LSRInUse = 0;
-							BrTaken = 0;
-							ImmSize = 1;
-							ALUOp = 3'b010;
-							ImmSize = 1;
-							
-							UncondBr = 0;
-						end
-						default: begin
-							case(command[31:21])
-								  //10101011000
-								11'b10101011000 : begin
-									//ADDS
-									commandType = ADDS;
-									Reg2Loc = 1;
-									ALUSrc = 0;
-									MemToReg = 0;
-									FlagsShouldSet = 1;
-									RegWrite = 1;
-									LSRInUse = 0;
-									MemWrite = 0;
-									BrTaken = 0;
-									ALUOp = 3'b010;
-									
-									ImmSize = 0;
-									UncondBr = 0;
-									
-								end
-								11'b10001010000 : begin
-									//AND
-									commandType = AND;
-									Reg2Loc = 1;
-									ALUSrc = 0;
-									FlagsShouldSet = 0;
-									LSRInUse = 0;
-									MemToReg = 0;
-									RegWrite = 1;
-									MemWrite = 0;
-									BrTaken = 0;
-									ALUOp = 3'b100;
-									
-									ImmSize = 0;
-									UncondBr = 0;
-								end
-								11'b11001010000 : begin
-									//EOR
-									commandType = EOR;
-									Reg2Loc = 1;
-									ALUSrc = 0;
-									LSRInUse = 0;
-									FlagsShouldSet = 0;
-									MemToReg = 0;
-									RegWrite = 1;
-									MemWrite = 0;
-									BrTaken = 0;
-									ALUOp = 3'b110;
-									
-									ImmSize = 0;
-									UncondBr = 0;
-								end
-								11'b11111000010 : begin
-									//LDUR
-									commandType = LDUR;
-									ALUSrc = 1;
-									MemToReg = 1;
-									LSRInUse = 0;
-									RegWrite = 1;
-									FlagsShouldSet = 0;
-									MemWrite = 0;
-									BrTaken = 0;
-									ImmSize = 0;
-									ALUOp = 3'b010;
-									
-									Reg2Loc = 0;
-									UncondBr = 0;
-									
-								end
-								11'b11010011010 : begin
-									//LSR
-									commandType = LSR;
-									Reg2Loc = 1;
-									ALUSrc = 1;
-									MemToReg = 0;
-									RegWrite = 1;
-									FlagsShouldSet = 0;
-									MemWrite = 0;
-									BrTaken = 0;
-									ImmSize = 1;
-									LSRInUse = 1;
-									
-									ALUOp = 3'b000;
-									UncondBr = 0;
-								end
-								11'b11111000000 : begin
-									//STUR
-									commandType = STUR;
-									Reg2Loc = 0;
-									ALUSrc = 1;
-									FlagsShouldSet = 0;
-									LSRInUse = 0;
-									RegWrite = 0;
-									MemWrite = 1;
-									BrTaken = 0;
-									//this looks wrong but not gonna change yet
-									UncondBr = 1;
-									ImmSize = 0;
-									ALUOp = 3'b010;
-									
-									MemToReg = 0;
-								end
-								
-								  //10101011000
-								11'b11101011000 : begin
-									//SUBS
-									commandType = SUBS;
-									Reg2Loc = 1;
-									ALUSrc = 0;
-									FlagsShouldSet = 1;
-									LSRInUse = 0;
-									MemToReg = 0;
-									RegWrite = 1;
-									MemWrite = 0;
-									BrTaken = 0;
-									ALUOp = 3'b011;
-									
-									ImmSize = 0;
-									UncondBr = 0;
-									
-								end
-								default: begin
-									//error
-									commandType = ERROR;		
-									
-									Reg2Loc = 0;
-									ALUSrc = 0;
-									FlagsShouldSet = 0;
-									LSRInUse = 0;
-									MemToReg = 0;
-									RegWrite = 0;
-									MemWrite = 0;
-									BrTaken = 0;
-									ALUOp = 3'b000;
-									ImmSize = 0;
-									UncondBr = 0;
-								end
-							endcase
-						end
-					endcase
-				end
-			endcase
-		end
-	endcase
-end
-
-
-
+module cpu(clock, reset);
+
+    parameter delay = 50;  // Standard delay for gate propagation
+
+    //====================================================================================
+    // PRIMARY INPUTS AND PARAMETERS
+    //====================================================================================
+    
+    input logic clock;     // System clock
+    input logic reset;     // Active high reset signal
+
+    //====================================================================================
+    // INSTRUCTION PROCESSING
+    //====================================================================================
+    
+    // Current instruction being processed
+    logic [31:0] instruction;  // Current instruction from instruction memory
+
+    // Instruction type enumeration for better readability
+    typedef enum { 
+        RESET, B, BLT, CBZ, ADDI, ADDS, AND, EOR, LDUR, LSR, STUR, SUBS, ERROR 
+    } instruction_type;    // Defines all supported instruction types
+
+    instruction_type current_instruction;    // Current instruction type being processed
+
+    //====================================================================================
+    // CONTROL SIGNALS
+    //====================================================================================
+    
+    // Main control signals
+    logic reg_to_loc;          // 0: Use rd_addr as second register, 1: Use rm_addr
+    logic alu_src;             // 0: Use register value for ALU B input, 1: Use immediate
+    logic mem_to_reg;          // 0: Pass ALU result to register, 1: Pass memory data
+    logic imm_size;            // 0: Use 9-bit immediate, 1: Use 12-bit immediate
+    logic reg_write;           // 1: Write to register file
+    logic mem_write;           // 1: Write to data memory
+    logic branch_taken;        // 1: Take branch
+    logic uncond_branch;       // 1: Unconditional branch, 0: Conditional branch
+    logic lsr_in_use;          // 1: Use LSR result instead of ALU result
+    logic debug_mode;          // Debug flag for simulation
+    logic flags_should_set;    // 1: Update condition flags
+    logic [2:0] alu_op;        // ALU operation code
+
+    // Condition flags
+    logic zero_flag, temp_zero_flag;             // Set when result is zero
+    logic negative_flag, temp_negative_flag;     // Set when result is negative
+    logic overflow_flag, temp_overflow_flag;     // Set when operation causes overflow
+    logic carryout_flag, temp_carryout_flag;     // Set when operation causes carry
+    logic cbz_should_branch;                     // Signal for CBZ branch condition
+    logic blt_should_branch;                     // Signal for B.LT branch condition
+
+    //====================================================================================
+    // REGISTER ADDRESSES
+    //====================================================================================
+    
+    // Register addresses from instruction
+    logic [4:0] rd_addr;               // Destination register address
+    logic [4:0] rm_addr;               // Second source register address
+    logic [4:0] rn_addr;               // First source register address
+    logic [4:0] ab_addr;               // Selected second register address (rd_addr or rm_addr)
+    
+    // Register addresses in pipeline stages
+    logic [4:0] rf_rd_addr;            // Destination register in RF stage
+    logic [4:0] ex_rd_addr;            // Destination register in EX stage
+    logic [4:0] mem_rd_addr;           // Destination register in MEM stage
+    logic [4:0] wb_rd_addr;            // Destination register in WB stage
+    logic [4:0] rf_rm_addr;            // Second source register in RF stage
+    logic [4:0] rf_rn_addr;            // First source register in RF stage
+    
+    // Special register constant
+    logic [4:0] do_not_write;          // Special register that can't be written to (x31)
+
+    //====================================================================================
+    // IMMEDIATE VALUES
+    //====================================================================================
+    
+    // Immediate fields from instruction
+    logic [8:0] d_addr_9;              // 9-bit immediate for memory addressing
+    logic [11:0] imm_12;               // 12-bit immediate for ALU operations
+    logic [18:0] cond_addr_19;         // 19-bit conditional branch address field
+    logic [25:0] branch_addr_26;       // 26-bit unconditional branch address field
+    logic [5:0] ex_shift_amount;       // Shift amount for LSR instruction
+    
+    // Immediate fields in RF stage
+    logic [8:0] rf_d_addr_9;           // 9-bit immediate in RF stage
+    logic [11:0] rf_imm_12;            // 12-bit immediate in RF stage
+
+    //====================================================================================
+    // DATA PATH SIGNALS
+    //====================================================================================
+    
+    // Extended immediate values
+    logic [63:0] d_addr_extended;      // Sign-extended 9-bit immediate for memory addressing
+    logic [63:0] imm12_extended;       // Zero-extended 12-bit immediate for ALU operations
+    logic [63:0] cond_addr_extended;   // Sign-extended conditional branch address
+    logic [63:0] branch_addr_extended; // Sign-extended unconditional branch address
+    
+    // ALU and data signals
+    logic [63:0] write_to_register;    // Data to be written to register file
+    logic [63:0] alu_b_input;          // B input to ALU (register or immediate)
+    logic [63:0] data_a;               // Data read from register file (first operand)
+    logic [63:0] data_b;               // Data read from register file (second operand)
+    logic [63:0] imm_choice;           // Selected immediate value based on imm_size
+    logic [63:0] alu_result;           // Result of ALU operation
+    logic [63:0] data_out;             // Data read from data memory
+    logic [63:0] alu_mux_input;        // Direct output from ALU before LSR mux
+    logic [63:0] lsr_mux_input;        // Output from LSR unit
+    
+    // Program counter and branch signals
+    logic [63:0] program_counter;      // Current program counter value
+    logic [63:0] chosen_addr;          // Selected branch address based on branch type
+    logic [63:0] shifted_addr;         // Branch address shifted left by 2 bits
+    logic [63:0] next_count_branch;    // Next PC if branch is taken
+    logic [63:0] next_count;           // Next PC if branch is not taken (PC+4)
+    logic [63:0] next_addr;            // Final next PC value
+
+    //====================================================================================
+    // PIPELINE REGISTERS
+    //====================================================================================
+    
+    // Pipeline enable signal
+    logic pipeline_enable;             // Active when not in reset
+    
+    // Data pipeline registers
+    logic [63:0] if_out;               // Output from IF stage
+    logic [63:0] rf_a_out;             // First operand from RF stage
+    logic [63:0] rf_b_out;             // Second operand from RF stage
+    logic [63:0] rf_w_out;             // Destination register address from RF stage
+    logic [63:0] ex_out;               // ALU/LSR result from EX stage
+    logic [63:0] ex_b_out;             // Bypass data from EX stage (for store instructions)
+    logic [63:0] ex_w_out;             // Destination register address from EX stage
+    logic [63:0] mem_out;              // Data from MEM stage
+    logic [63:0] mem_w_out;            // Destination register address from MEM stage
+    logic [63:0] rf_bypass_out;        // Bypass data for store instructions
+    
+    // Instruction pipeline registers
+    logic [31:0] rf_instruction;       // Instruction in RF stage
+    logic [31:0] ex_instruction;       // Instruction in EX stage
+    logic [31:0] mem_instruction;      // Instruction in MEM stage
+    logic [31:0] wb_instruction;       // Instruction in WB stage
+
+    //====================================================================================
+    // FORWARDING UNIT SIGNALS
+    //====================================================================================
+    
+    // Forwarding inputs
+    logic [63:0] rf_a_input;           // Input A to RF stage (possibly forwarded)
+    logic [63:0] rf_b_input;           // Input B to RF stage (possibly forwarded)
+    
+    // Equality check results
+    logic eq_rn_rf, eq_rn_ex, eq_rn_mem;    // Equality check results for rn_addr
+    logic eq_rd_rf, eq_rd_ex, eq_rd_mem;    // Equality check results for rd_addr
+    logic eq_rm_rf, eq_rm_ex, eq_rm_mem;    // Equality check results for rm_addr
+    
+    // Register writability signals
+    logic rn_cant_write, rn_can_write;      // Whether rn_addr can be written to
+    logic rd_cant_write, rd_can_write;      // Whether rd_addr can be written to
+    logic rm_cant_write, rm_can_write;      // Whether rm_addr can be written to
+    
+    // Control signal inversions
+    logic not_reg_to_loc, not_alu_src;      // Inverted control signals
+    
+    // Forwarding control signals
+    // From EX stage
+    logic forward_rd_exec_to_a;             // Forward from EX to A input
+    logic forward_rd_exec_to_rd;            // Forward from EX to rd_addr
+    logic forward_rd_exec_to_rm;            // Forward from EX to rm_addr
+    logic forward_rd_exec_to_b;             // Forward from EX to B input
+    
+    // From MEM stage
+    logic forward_rd_mem_to_a;              // Forward from MEM to A input
+    logic forward_rd_mem_to_rd;             // Forward from MEM to rd_addr
+    logic forward_rd_mem_to_rm;             // Forward from MEM to rm_addr
+    logic forward_rd_mem_to_b;              // Forward from MEM to B input
+    
+    // From WB stage
+    logic forward_rd_wb_to_a;               // Forward from WB to A input
+    logic forward_rd_wb_to_rd;              // Forward from WB to rd_addr
+    logic forward_rd_wb_to_rm;              // Forward from WB to rm_addr
+    logic forward_rd_wb_to_b;               // Forward from WB to B input
+    
+    // Forwarding data signals
+    logic [63:0] forwarding_choice_a;       // Selected data for A input
+    logic [63:0] forwarding_choice_b;       // Selected data for B input
+    logic [63:0] mem_wb_forwarding_choice_a; // Selected data from MEM/WB for A
+    logic [63:0] mem_wb_forwarding_choice_b; // Selected data from MEM/WB for B
+    
+    // Final forwarding control signals
+    logic mem_wb_forward_a, mem_wb_forward_b; // Control signals for MEM/WB forwarding
+    logic forward_a, forward_b;               // Final forwarding control signals
+
+    //====================================================================================
+    // PIPELINED CONTROL SIGNALS
+    //====================================================================================
+    
+    // RF stage control signals
+    logic rf_reg_write;                // Register write in RF stage
+    logic rf_mem_write;                // Memory write in RF stage
+    logic rf_flags_should_set;         // Flag update in RF stage
+    logic rf_lsr_in_use;               // LSR use in RF stage
+    logic rf_mem_to_reg;               // Memory to register in RF stage
+    logic rf_reg_to_loc;               // Register to location in RF stage
+    logic rf_alu_src;                  // ALU source in RF stage
+    logic rf_imm_size;                 // Immediate size in RF stage
+    logic [2:0] rf_alu_op;             // ALU operation in RF stage
+    
+    // EX stage control signals
+    logic ex_reg_write;                // Register write in EX stage
+    logic ex_mem_write;                // Memory write in EX stage
+    logic ex_mem_to_reg;               // Memory to register in EX stage
+    logic ex_reg_to_loc;               // Register to location in EX stage
+    logic ex_flags_should_set;         // Flag update in EX stage
+    logic ex_lsr_in_use;               // LSR use in EX stage
+    logic [2:0] ex_alu_op;             // ALU operation in EX stage
+    
+    // MEM stage control signals
+    logic mem_reg_write;               // Register write in MEM stage
+    logic mem_mem_write;               // Memory write in MEM stage
+    logic mem_mem_to_reg;              // Memory to register in MEM stage
+    logic mem_reg_to_loc;              // Register to location in MEM stage
+    
+    // WB stage control signals
+    logic wb_reg_write;                // Register write in WB stage
+
+    //====================================================================================
+    // INSTRUCTION FETCH STAGE
+    //====================================================================================
+    // This stage fetches instructions from instruction memory based on the program counter
+
+    // Extract branch address fields from instruction
+    assign cond_addr_19 = instruction[23:5];
+    assign branch_addr_26 = instruction[25:0];
+
+    // Sign extend branch address fields to 64 bits
+    sign_extend #(.IMMLENGTH(19)) cond_extend (.in(cond_addr_19), .is_signed(1'b1), .out(cond_addr_extended));
+    sign_extend #(.IMMLENGTH(26)) branch_extend (.in(branch_addr_26), .is_signed(1'b1), .out(branch_addr_extended));
+
+    // Select between conditional and unconditional branch address
+    genvar i;
+    generate
+        for(i = 0; i < 64; i++) begin : each_br_addr_bit
+            mux2_1 branch_addr_mux (.out(chosen_addr[i]), .i0(cond_addr_extended[i]), .i1(branch_addr_extended[i]), .sel(uncond_branch));
+        end
+    endgenerate
+
+    // Shift the address left by 2 bits (multiply by 4 for byte addressing)
+    linear_shift_left #(.SHIFT(2)) addr_shifter (.in(chosen_addr), .enable(1), .out(shifted_addr));
+
+    // Calculate the next address options
+    adder branch_adder (.A(shifted_addr), .B(program_counter), .sum(next_count_branch), .carryOut(), .overflow());
+    adder count_adder (.A(program_counter), .B(4), .sum(next_count), .carryOut(), .overflow());
+
+    // Select between PC+4 and branch target based on branch_taken signal
+    generate
+        for(i = 0; i < 64; i++) begin : each_br_sel_addr_bit
+            mux2_1 branch_sel_mux (.out(next_addr[i]), .i0(next_count[i]), .i1(next_count_branch[i]), .sel(branch_taken));
+        end
+    endgenerate
+
+    // Program counter register
+    register pc_register (.clk(clock), .in(next_addr), .reset(reset), .enable(1'b1), .out(program_counter));
+
+    // Instruction memory - fetches the instruction at the current PC
+    instructmem instruction_memory (.address(program_counter), .instruction(instruction), .clk(clock));
+
+    //====================================================================================
+    // REGISTER FETCH STAGE
+    //====================================================================================
+    // This stage reads operands from the register file and prepares them for execution
+
+    // Extract register addresses from instruction
+    assign rd_addr = instruction[4:0];
+    assign rm_addr = instruction[20:16];
+    assign rn_addr = instruction[9:5];
+
+    // Extract shift amount for LSR instruction
+    assign ex_shift_amount = ex_instruction[15:10];
+    
+    // Extract immediate fields from instruction in RF stage
+    assign rf_d_addr_9 = rf_instruction[20:12];
+    assign rf_imm_12 = rf_instruction[21:10];
+
+    // Select between rd_addr and rm_addr based on reg_to_loc for second register operand
+    generate
+        for(i = 0; i < 5; i++) begin : each_register_bit
+            mux2_1 a_mux (.out(ab_addr[i]), .i0(rf_rd_addr[i]), .i1(rf_rm_addr[i]), .sel(reg_to_loc));
+        end
+    endgenerate
+
+    // Register file - reads operands from registers
+    register_file cpu_register_file (
+        .clk(clock), 
+        .write_enable(wb_reg_write),       // Write enable from WB stage
+        .write_data(mem_out),           // Data to write from MEM stage
+        .write_addr(mem_w_out),     // Register to write to from MEM stage
+        .read_data_1(data_a),            // First operand output
+        .read_data_2(data_b),            // Second operand output
+        .read_addr_1(rf_rn_addr),    // First register address
+        .read_addr_2(ab_addr),       // Second register address
+        .reset(reset)
+    );
+
+    // Sign extension for immediate values
+    sign_extend #(.IMMLENGTH(9)) d_extend (.in(rf_d_addr_9), .is_signed(1'b1), .out(d_addr_extended));
+    sign_extend #(.IMMLENGTH(12)) imm12_extend (.in(rf_imm_12), .is_signed(1'b0), .out(imm12_extended));
+
+    // Branch condition logic for B.LT instruction
+    assign cbz_should_branch = zero_flag;
+    xor #delay (blt_should_branch, negative_flag, overflow_flag);  // B.LT branches when N≠V
+
+    // Select between different immediate values and register values for ALU input
+    generate
+        for(i = 0; i < 64; i++) begin : each_data_bit
+            // Select between 9-bit and 12-bit immediate based on imm_size
+            mux2_1 imm_mux (.out(imm_choice[i]), .i0(d_addr_extended[i]), .i1(imm12_extended[i]), .sel(rf_imm_size));
+            
+            // Select between register value and immediate for ALU B input
+            mux2_1 alu_b_mux (.out(alu_b_input[i]), .i0(rf_b_input[i]), .i1(imm_choice[i]), .sel(rf_alu_src));
+        end
+    endgenerate
+
+    //====================================================================================
+    // EXECUTION STAGE
+    //====================================================================================
+    // This stage performs ALU operations or shift operations on the operands
+
+    // ALU operation - performs arithmetic and logic operations
+    alu main_alu (
+        .A(rf_a_out),                  // First operand
+        .B(rf_b_out),                  // Second operand
+        .cntrl(ex_alu_op),             // ALU operation code
+        .result(alu_mux_input),        // Result of operation
+        .negative(temp_negative_flag), // Negative flag
+        .zero(temp_zero_flag),         // Zero flag
+        .overflow(temp_overflow_flag), // Overflow flag
+        .carry_out(temp_carryout_flag) // Carry out flag
+    );
+
+    // Logical shift right operation for LSR instruction
+    linear_shift_right_dynamic logical_shift_right (.in(rf_a_out), .shift_amount(ex_shift_amount), .out(lsr_mux_input));
+
+    // Select between ALU and LSR results based on lsr_in_use
+    generate
+        for(i = 0; i < 64; i++) begin : each_alu_or_lsr_bit
+            mux2_1 alu_lsr_mux (.out(alu_result[i]), .i0(alu_mux_input[i]), .i1(lsr_mux_input[i]), .sel(ex_lsr_in_use));
+        end
+    endgenerate
+
+    //====================================================================================
+    // MEMORY STAGE
+    //====================================================================================
+    // This stage accesses data memory for load and store instructions
+
+    // Data memory access - reads or writes data based on control signals
+    datamem data_memory (
+        .address(ex_out),              // Memory address from EX stage
+        .write_enable(mem_mem_write),  // Write enable signal
+        .read_enable(mem_mem_to_reg),  // Read enable signal
+        .write_data(ex_b_out),         // Data to write for store instructions
+        .clk(clock),                   // System clock
+        .xfer_size(8),                 // Transfer size in bytes (always 8 for this implementation)
+        .read_data(data_out)           // Data read from memory
+    );
+
+    // Select between memory data and ALU result based on mem_to_reg
+    generate
+        for(i = 0; i < 64; i++) begin : each_mem_or_alu_bit
+            mux2_1 mem_or_alu_mux (.out(write_to_register[i]), .i0(ex_out[i]), .i1(data_out[i]), .sel(mem_mem_to_reg));
+        end
+    endgenerate
+
+    //====================================================================================
+    // PIPELINE REGISTERS IMPLEMENTATION
+    //====================================================================================
+    // These registers pass data and control signals between pipeline stages
+
+    // Pipeline enable signal - active when not in reset
+    not #delay (pipeline_enable, reset);
+
+    //-----------------------------------------------------------------------------------
+    // Register Fetch Stage Pipeline Registers
+    //-----------------------------------------------------------------------------------
+    
+    // RF stage data registers
+    register rf_a_reg (.clk(clock), .in(rf_a_input), .reset(reset), .enable(pipeline_enable), .out(rf_a_out));
+    register rf_b_reg (.clk(clock), .in(alu_b_input), .reset(reset), .enable(pipeline_enable), .out(rf_b_out));
+    register rf_bypass_reg (.clk(clock), .in(rf_b_input), .reset(reset), .enable(pipeline_enable), .out(rf_bypass_out));
+    register rf_w_reg (.clk(clock), .in(rf_rd_addr), .reset(reset), .enable(pipeline_enable), .out(rf_w_out));
+
+    //-----------------------------------------------------------------------------------
+    // Execute Stage Pipeline Registers
+    //-----------------------------------------------------------------------------------
+    
+    // EX stage data registers
+    register ex_reg (.clk(clock), .in(alu_result), .reset(reset), .enable(pipeline_enable), .out(ex_out));
+    register ex_b_reg (.clk(clock), .in(rf_bypass_out), .reset(reset), .enable(pipeline_enable), .out(ex_b_out));
+    register ex_w_reg (.clk(clock), .in(rf_w_out), .reset(reset), .enable(pipeline_enable), .out(ex_w_out));
+
+    //-----------------------------------------------------------------------------------
+    // Memory Stage Pipeline Registers
+    //-----------------------------------------------------------------------------------
+    
+    // MEM stage data registers
+    register mem_reg (.clk(clock), .in(write_to_register), .reset(reset), .enable(pipeline_enable), .out(mem_out));
+    register mem_w_reg (.clk(clock), .in(ex_w_out), .reset(reset), .enable(pipeline_enable), .out(mem_w_out));
+
+    //-----------------------------------------------------------------------------------
+    // Instruction Pipeline Registers
+    //-----------------------------------------------------------------------------------
+    
+    // Extract register addresses from pipelined instructions
+    assign rf_rd_addr = rf_instruction[4:0];
+    assign ex_rd_addr = ex_instruction[4:0];
+    assign mem_rd_addr = mem_instruction[4:0];
+    assign wb_rd_addr = wb_instruction[4:0];
+    assign rf_rm_addr = rf_instruction[20:16];
+    assign rf_rn_addr = rf_instruction[9:5];
+
+    // Pass the instruction through the pipeline
+    // By resetting to one instead of 0, the forwarding unit won't try to forward anything
+    // since it'll always be at x31 (register that can't be written to)
+    register #(.RESET(1'b1)) rf_instruction_reg (.clk(clock), .in(instruction), .reset(reset), .enable(pipeline_enable), .out(rf_instruction));
+    register #(.RESET(1'b1)) ex_instruction_reg (.clk(clock), .in(rf_instruction), .reset(reset), .enable(pipeline_enable), .out(ex_instruction));
+    register #(.RESET(1'b1)) mem_instruction_reg (.clk(clock), .in(ex_instruction), .reset(reset), .enable(pipeline_enable), .out(mem_instruction));
+    register #(.RESET(1'b1)) wb_instruction_reg (.clk(clock), .in(mem_instruction), .reset(reset), .enable(pipeline_enable), .out(wb_instruction));
+
+    //-----------------------------------------------------------------------------------
+    // Control Signal Pipeline Registers
+    //-----------------------------------------------------------------------------------
+    
+    // RF stage control registers
+    register #(.WIDTH(1)) rf_reg_write_reg (.clk(clock), .in(reg_write), .reset(reset), .enable(pipeline_enable), .out(rf_reg_write));
+    register #(.WIDTH(1)) rf_mem_write_reg (.clk(clock), .in(mem_write), .reset(reset), .enable(pipeline_enable), .out(rf_mem_write));
+    register #(.WIDTH(1)) rf_flags_should_set_reg (.clk(clock), .in(flags_should_set), .reset(reset), .enable(pipeline_enable), .out(rf_flags_should_set));
+    register #(.WIDTH(1)) rf_lsr_in_use_reg (.clk(clock), .in(lsr_in_use), .reset(reset), .enable(pipeline_enable), .out(rf_lsr_in_use));
+    register #(.WIDTH(1)) rf_mem_to_reg_reg (.clk(clock), .in(mem_to_reg), .reset(reset), .enable(pipeline_enable), .out(rf_mem_to_reg));
+    register #(.WIDTH(1)) rf_reg_to_loc_reg (.clk(clock), .in(reg_to_loc), .reset(reset), .enable(pipeline_enable), .out(rf_reg_to_loc));
+    register #(.WIDTH(1)) rf_alu_src_reg (.clk(clock), .in(alu_src), .reset(reset), .enable(pipeline_enable), .out(rf_alu_src));
+    register #(.WIDTH(1)) rf_imm_size_reg (.clk(clock), .in(imm_size), .reset(reset), .enable(pipeline_enable), .out(rf_imm_size));
+    register #(.WIDTH(3)) rf_alu_op_reg (.clk(clock), .in(alu_op), .reset(reset), .enable(pipeline_enable), .out(rf_alu_op));
+
+    // EX stage control registers
+    register #(.WIDTH(1)) ex_reg_write_reg (.clk(clock), .in(rf_reg_write), .reset(reset), .enable(pipeline_enable), .out(ex_reg_write));
+    register #(.WIDTH(1)) ex_mem_write_reg (.clk(clock), .in(rf_mem_write), .reset(reset), .enable(pipeline_enable), .out(ex_mem_write));
+    register #(.WIDTH(1)) ex_mem_to_reg_reg (.clk(clock), .in(rf_mem_to_reg), .reset(reset), .enable(pipeline_enable), .out(ex_mem_to_reg));
+    register #(.WIDTH(1)) ex_reg_to_loc_reg (.clk(clock), .in(rf_reg_to_loc), .reset(reset), .enable(pipeline_enable), .out(ex_reg_to_loc));
+    register #(.WIDTH(1)) ex_flags_should_set_reg (.clk(clock), .in(rf_flags_should_set), .reset(reset), .enable(pipeline_enable), .out(ex_flags_should_set));
+    register #(.WIDTH(1)) ex_lsr_in_use_reg (.clk(clock), .in(rf_lsr_in_use), .reset(reset), .enable(pipeline_enable), .out(ex_lsr_in_use));
+    register #(.WIDTH(3)) ex_alu_op_reg (.clk(clock), .in(rf_alu_op), .reset(reset), .enable(pipeline_enable), .out(ex_alu_op));
+
+    // MEM stage control registers
+    register #(.WIDTH(1)) mem_reg_write_reg (.clk(clock), .in(ex_reg_write), .reset(reset), .enable(pipeline_enable), .out(mem_reg_write));
+    register #(.WIDTH(1)) mem_mem_write_reg (.clk(clock), .in(ex_mem_write), .reset(reset), .enable(pipeline_enable), .out(mem_mem_write));
+    register #(.WIDTH(1)) mem_mem_to_reg_reg (.clk(clock), .in(ex_mem_to_reg), .reset(reset), .enable(pipeline_enable), .out(mem_mem_to_reg));
+    register #(.WIDTH(1)) mem_reg_to_loc_reg (.clk(clock), .in(ex_reg_to_loc), .reset(reset), .enable(pipeline_enable), .out(mem_reg_to_loc));
+
+    // WB stage control registers
+    register #(.WIDTH(1)) wb_reg_write_reg (.clk(clock), .in(mem_reg_write), .reset(reset), .enable(pipeline_enable), .out(wb_reg_write));
+
+    //====================================================================================
+    // FORWARDING UNIT
+    //====================================================================================
+    // This unit detects and resolves data hazards by forwarding results from later
+    // pipeline stages to earlier stages when dependencies are detected
+
+    //-----------------------------------------------------------------------------------
+    // Hazard Detection Logic
+    //-----------------------------------------------------------------------------------
+    
+    // Check if rf_rn_addr (which goes into Aa) of instruction (in the RF stage) is equal to rd_addr in each stage
+    equality_checker eq_rn_rf_checker (.in0(rf_rn_addr), .in1(ex_rd_addr), .out(eq_rn_rf));
+    equality_checker eq_rn_ex_checker (.in0(rf_rn_addr), .in1(mem_rd_addr), .out(eq_rn_ex));
+    equality_checker eq_rn_mem_checker (.in0(rf_rn_addr), .in1(wb_rd_addr), .out(eq_rn_mem));
+
+    // Check if rd_addr, which goes into Ab when reg_to_loc is false, is equal to rd_addr in upcoming stages
+    equality_checker eq_rd_rf_checker (.in0(rf_rd_addr), .in1(ex_rd_addr), .out(eq_rd_rf));
+    equality_checker eq_rd_ex_checker (.in0(rf_rd_addr), .in1(mem_rd_addr), .out(eq_rd_ex));
+    equality_checker eq_rd_mem_checker (.in0(rf_rd_addr), .in1(wb_rd_addr), .out(eq_rd_mem));
+
+    // Check if rm_addr, which goes into Ab when reg_to_loc is true, is equal to rd_addr in each stage
+    equality_checker eq_rm_rf_checker (.in0(rf_rm_addr), .in1(ex_rd_addr), .out(eq_rm_rf));
+    equality_checker eq_rm_ex_checker (.in0(rf_rm_addr), .in1(mem_rd_addr), .out(eq_rm_ex));
+    equality_checker eq_rm_mem_checker (.in0(rf_rm_addr), .in1(wb_rd_addr), .out(eq_rm_mem));
+
+    // Register x31 is used as a special case (cannot be written to)
+    assign do_not_write = 31;
+
+    //-----------------------------------------------------------------------------------
+    // Forwarding from Execution Stage
+    //-----------------------------------------------------------------------------------
+    
+    // If rf_rn_addr is equal to rd_addr in the exec stage, and we're going to write with rd_addr, 
+    // and rf_rn_addr is not x31, use the output of the ALU instead of rf_rn_addr
+    equality_checker is_rn_x31 (.in0(rf_rn_addr), .in1(do_not_write), .out(rn_cant_write));
+    not #delay (rn_can_write, rn_cant_write);
+    and #delay (forward_rd_exec_to_a, rn_can_write, eq_rn_rf, ex_reg_write);
+
+    // Forwarding for B input
+    equality_checker is_rd_x31 (.in0(rf_rd_addr), .in1(do_not_write), .out(rd_cant_write));
+    not #delay (rd_can_write, rd_cant_write);
+
+    equality_checker is_rm_x31 (.in0(rf_rm_addr), .in1(do_not_write), .out(rm_cant_write));
+    not #delay (rm_can_write, rm_cant_write);
+
+    // Invert control signals for logic gates
+    not #delay (not_reg_to_loc, rf_reg_to_loc);
+    not #delay (not_alu_src, rf_alu_src);
+
+    // Generate forwarding control signals for B input
+    // Forward from EX stage to rd_addr when:
+    // - rd_addr matches destination in EX stage
+    // - EX stage will write to register file
+    // - rd_addr is not x31
+    // - reg_to_loc is 0 (using rd_addr as second operand)
+    // - alu_src is 0 (using register value, not immediate)
+    and #delay (forward_rd_exec_to_rd, eq_rd_rf, ex_reg_write, rd_can_write, not_reg_to_loc, not_alu_src);
+    
+    // Forward from EX stage to rm_addr when:
+    // - rm_addr matches destination in EX stage
+    // - EX stage will write to register file
+    // - rm_addr is not x31
+    // - reg_to_loc is 1 (using rm_addr as second operand)
+    // - alu_src is 0 (using register value, not immediate)
+    and #delay (forward_rd_exec_to_rm, eq_rm_rf, ex_reg_write, rm_can_write, rf_reg_to_loc, not_alu_src);
+    
+    // Combine forwarding signals for B input
+    or #delay (forward_rd_exec_to_b, forward_rd_exec_to_rm, forward_rd_exec_to_rd);
+
+    //-----------------------------------------------------------------------------------
+    // Forwarding from Memory Stage
+    //-----------------------------------------------------------------------------------
+    
+    // Forward from MEM stage to A input when:
+    // - rn_addr matches destination in MEM stage
+    // - MEM stage will write to register file
+    // - rn_addr is not x31
+    and #delay (forward_rd_mem_to_a, rn_can_write, eq_rn_ex, mem_reg_write);
+
+    // Forward from MEM stage to B input
+    // Forward from MEM stage to rd_addr when:
+    // - rd_addr matches destination in MEM stage
+    // - MEM stage will write to register file
+    // - rd_addr is not x31
+    // - reg_to_loc is 0 (using rd_addr as second operand)
+    // - alu_src is 0 (using register value, not immediate)
+    and #delay (forward_rd_mem_to_rd, eq_rd_ex, mem_reg_write, rd_can_write, not_alu_src, not_reg_to_loc);
+    
+    // Forward from MEM stage to rm_addr when:
+    // - rm_addr matches destination in MEM stage
+    // - MEM stage will write to register file
+    // - rm_addr is not x31
+    // - reg_to_loc is 1 (using rm_addr as second operand)
+    // - alu_src is 0 (using register value, not immediate)
+    and #delay (forward_rd_mem_to_rm, eq_rm_ex, mem_reg_write, rm_can_write, not_alu_src, reg_to_loc);
+    
+    // Combine forwarding signals for B input from MEM stage
+    or #delay (forward_rd_mem_to_b, forward_rd_mem_to_rd, forward_rd_mem_to_rm);
+
+    //-----------------------------------------------------------------------------------
+    // Forwarding from Writeback Stage
+    //-----------------------------------------------------------------------------------
+    
+    // Forward from WB stage to A input when:
+    // - rn_addr matches destination in WB stage
+    // - WB stage will write to register file
+    // - rn_addr is not x31
+    and #delay (forward_rd_wb_to_a, rn_can_write, eq_rn_mem, wb_reg_write);
+
+    // Forward from WB stage to B input
+    // Forward from WB stage to rd_addr when:
+    // - rd_addr matches destination in WB stage
+    // - WB stage will write to register file
+    // - rd_addr is not x31
+    // - reg_to_loc is 0 (using rd_addr as second operand)
+    // - alu_src is 0 (using register value, not immediate)
+    and #delay (forward_rd_wb_to_rd, eq_rd_mem, wb_reg_write, rd_can_write, not_alu_src, not_reg_to_loc);
+    
+    // Forward from WB stage to rm_addr when:
+    // - rm_addr matches destination in WB stage
+    // - WB stage will write to register file
+    // - rm_addr is not x31
+    // - reg_to_loc is 1 (using rm_addr as second operand)
+    // - alu_src is 0 (using register value, not immediate)
+    and #delay (forward_rd_wb_to_rm, eq_rm_mem, wb_reg_write, rm_can_write, not_alu_src, reg_to_loc);
+    
+    // Combine forwarding signals for B input from WB stage
+    or #delay (forward_rd_wb_to_b, forward_rd_wb_to_rd, forward_rd_wb_to_rm);
+
+    //-----------------------------------------------------------------------------------
+    // Forwarding Muxes
+    //-----------------------------------------------------------------------------------
+    
+    // Choose between MEM and WB forwarding
+    generate
+        for(i = 0; i < 64; i++) begin : each_mem_wb_forward_choice_mux
+            mux2_1 a_forward_choice_mux (.out(mem_wb_forwarding_choice_a[i]), .i0(mem_out[i]), .i1(write_to_register[i]), .sel(forward_rd_mem_to_a));
+            mux2_1 b_forward_choice_mux (.out(mem_wb_forwarding_choice_b[i]), .i0(mem_out[i]), .i1(write_to_register[i]), .sel(forward_rd_mem_to_b));
+        end
+    endgenerate
+
+    // Select control signals for MEM/WB forwarding
+    mux2_1 mem_wb_a_forward_choice_mux_e (.out(mem_wb_forward_a), .i0(forward_rd_wb_to_a), .i1(forward_rd_mem_to_a), .sel(forward_rd_mem_to_a));
+    mux2_1 mem_wb_b_forward_choice_mux_e (.out(mem_wb_forward_b), .i0(forward_rd_wb_to_b), .i1(forward_rd_mem_to_b), .sel(forward_rd_mem_to_b));
+
+    // Choose between MEM/WB forwarding and EX forwarding
+    // EX forwarding has higher priority
+    generate
+        for(i = 0; i < 64; i++) begin : each_forward_choice_mux
+            mux2_1 a_forward_choice_mux (.out(forwarding_choice_a[i]), .i0(mem_wb_forwarding_choice_a[i]), .i1(alu_result[i]), .sel(forward_rd_exec_to_a));
+            mux2_1 b_forward_choice_mux (.out(forwarding_choice_b[i]), .i0(mem_wb_forwarding_choice_b[i]), .i1(alu_result[i]), .sel(forward_rd_exec_to_b));
+        end
+    endgenerate
+
+    // Determine final forwarding control signals
+    mux2_1 a_forward_choice_mux_e (.out(forward_a), .i0(mem_wb_forward_a), .i1(forward_rd_exec_to_a), .sel(forward_rd_exec_to_a));
+    mux2_1 b_forward_choice_mux_e (.out(forward_b), .i0(mem_wb_forward_b), .i1(forward_rd_exec_to_b), .sel(forward_rd_exec_to_b));
+
+    // Final forwarding muxes - select between register file output and forwarded data
+    generate
+        for(i = 0; i < 64; i++) begin : each_forward_mux
+            mux2_1 a_forward_mux (.out(rf_a_input[i]), .i0(data_a[i]), .i1(forwarding_choice_a[i]), .sel(forward_a));
+            mux2_1 b_forward_mux (.out(rf_b_input[i]), .i0(data_b[i]), .i1(forwarding_choice_b[i]), .sel(forward_b));
+        end
+    endgenerate
+
+    //====================================================================================
+    // FLAG REGISTERS
+    //====================================================================================
+    // These registers store condition flags for branch instructions
+    
+    dff_with_enable zero_flag_dff (.clk(clock), .in(temp_zero_flag), .reset(reset), .enable(ex_flags_should_set), .out(zero_flag));
+    dff_with_enable carryout_flag_dff (.clk(clock), .in(temp_carryout_flag), .reset(reset), .enable(ex_flags_should_set), .out(carryout_flag));
+    dff_with_enable negative_flag_dff (.clk(clock), .in(temp_negative_flag), .reset(reset), .enable(ex_flags_should_set), .out(negative_flag));
+    dff_with_enable overflow_flag_dff (.clk(clock), .in(temp_overflow_flag), .reset(reset), .enable(ex_flags_should_set), .out(overflow_flag));
+
+    //====================================================================================
+    // RESET LOGIC
+    //====================================================================================
+    // Initialize CPU state on reset
+    
+    always_ff @(posedge clock) begin
+        if(reset) begin
+            program_counter = 0;
+            next_addr = 0;
+            instruction = 32'b10010001000000000000001111111111;  // NOP instruction
+            debug_mode = 0;
+            zero_flag = 0;
+            negative_flag = 0;
+            overflow_flag = 0;
+            carryout_flag = 0;
+        end
+    end
+
+    //====================================================================================
+    // INSTRUCTION DECODER
+    //====================================================================================
+    // This combinational logic decodes the instruction and sets control signals
+    
+    always_comb begin
+        case(instruction[31:26])
+            6'b000101 : begin
+                // B - Unconditional Branch
+                // Format: B imm26
+                // Operation: PC = PC + SignExtend(imm26 << 2)
+                current_instruction = B;
+                reg_write = 0;          // Don't write to register file
+                mem_write = 0;          // Don't write to memory
+                branch_taken = 1;       // Take the branch
+                uncond_branch = 1;      // Unconditional branch
+                flags_should_set = 0;   // Don't update flags
+                
+                // Don't cares - these signals aren't used for this instruction
+                reg_to_loc = 0;
+                alu_src = 0;
+                lsr_in_use = 0;
+                alu_op = 3'b000;
+                mem_to_reg = 0;
+                imm_size = 0;
+            end
+            default: begin
+                case(instruction[31:24])
+                    8'b01010100 : begin
+                        // B.LT - Branch if Less Than (N≠V)
+                        // Format: B.LT imm19
+                        // Operation: if (N≠V) PC = PC + SignExtend(imm19 << 2)
+                        current_instruction = BLT;                
+                        reg_to_loc = 0;         // Don't care for branch
+                        alu_src = 0;            // Don't care for branch
+                        reg_write = 0;          // Don't write to register file
+                        mem_write = 0;          // Don't write to memory
+                        lsr_in_use = 0;         // Don't use LSR
+                        branch_taken = blt_should_branch;  // Branch if N≠V
+                        uncond_branch = 0;      // Conditional branch
+                        flags_should_set = 0;   // Don't update flags
+                        alu_op = 3'b000;        // Don't care for branch
+                        
+                        // Don't cares
+                        mem_to_reg = 0;
+                        imm_size = 0;
+                    end
+                    8'b10110100 : begin
+                        // CBZ - Compare and Branch if Zero
+                        // Format: CBZ Rt, imm19
+                        // Operation: if (Rt == 0) PC = PC + SignExtend(imm19 << 2)
+                        current_instruction = CBZ;
+                        reg_to_loc = 0;         // Use Rt as operand
+                        alu_src = 0;            // Use register value
+                        reg_write = 0;          // Don't write to register file
+                        mem_write = 0;          // Don't write to memory
+                        lsr_in_use = 0;         // Don't use LSR
+                        flags_should_set = 0;   // Don't update flags
+                        branch_taken = cbz_should_branch;  // Branch if zero flag is set
+                        uncond_branch = 0;      // Conditional branch
+                        alu_op = 3'b000;        // Pass B (for comparison)
+                        
+                        // Don't cares
+                        mem_to_reg = 0;
+                        imm_size = 0;
+                    end
+                    default: begin
+                        case(instruction[31:22])
+                        10'b1001000100 : begin
+                            // ADDI - Add Immediate
+                            // Format: ADDI Rd, Rn, imm12
+                            // Operation: Rd = Rn + ZeroExtend(imm12)
+                            current_instruction = ADDI;
+                            reg_to_loc = 1;      // Use Rm field (not used)
+                            alu_src = 1;         // Use immediate
+                            mem_to_reg = 0;      // Use ALU result
+                            reg_write = 1;       // Write to register file
+                            flags_should_set = 0; // Don't update flags
+                            mem_write = 0;       // Don't write to memory
+                            lsr_in_use = 0;      // Don't use LSR
+                            branch_taken = 0;    // Don't branch
+                            imm_size = 1;        // Use 12-bit immediate
+                            alu_op = 3'b010;     // Add operation
+                            
+                            // Don't care
+                            uncond_branch = 0;
+                        end
+                        default: begin
+                            case(instruction[31:21])
+                                11'b10101011000 : begin
+                                    // ADDS - Add and Set Flags
+                                    // Format: ADDS Rd, Rn, Rm
+                                    // Operation: Rd = Rn + Rm, update flags
+                                    current_instruction = ADDS;
+                                    reg_to_loc = 1;       // Use Rm as second operand
+                                    alu_src = 0;          // Use register value
+                                    mem_to_reg = 0;       // Use ALU result
+                                    flags_should_set = 1; // Update flags
+                                    reg_write = 1;        // Write to register file
+                                    lsr_in_use = 0;       // Don't use LSR
+                                    mem_write = 0;        // Don't write to memory
+                                    branch_taken = 0;     // Don't branch
+                                    alu_op = 3'b010;      // Add operation
+                                    
+                                    // Don't cares
+                                    imm_size = 0;
+                                    uncond_branch = 0;
+                                end
+                                11'b10001010000 : begin
+                                    // AND - Bitwise AND
+                                    // Format: AND Rd, Rn, Rm
+                                    // Operation: Rd = Rn & Rm
+                                    current_instruction = AND;
+                                    reg_to_loc = 1;       // Use Rm as second operand
+                                    alu_src = 0;          // Use register value
+                                    flags_should_set = 0; // Don't update flags
+                                    lsr_in_use = 0;       // Don't use LSR
+                                    mem_to_reg = 0;       // Use ALU result
+                                    reg_write = 1;        // Write to register file
+                                    mem_write = 0;        // Don't write to memory
+                                    branch_taken = 0;     // Don't branch
+                                    alu_op = 3'b100;      // AND operation
+                                    
+                                    // Don't cares
+                                    imm_size = 0;
+                                    uncond_branch = 0;
+                                end
+                                11'b11001010000 : begin
+                                    // EOR - Exclusive OR
+                                    // Format: EOR Rd, Rn, Rm
+                                    // Operation: Rd = Rn ^ Rm
+                                    current_instruction = EOR;
+                                    reg_to_loc = 1;       // Use Rm as second operand
+                                    alu_src = 0;          // Use register value
+                                    lsr_in_use = 0;       // Don't use LSR
+                                    flags_should_set = 0; // Don't update flags
+                                    mem_to_reg = 0;       // Use ALU result
+                                    reg_write = 1;        // Write to register file
+                                    mem_write = 0;        // Don't write to memory
+                                    branch_taken = 0;     // Don't branch
+                                    alu_op = 3'b110;      // XOR operation
+                                    
+                                    // Don't cares
+                                    imm_size = 0;
+                                    uncond_branch = 0;
+                                end
+                                11'b11111000010 : begin
+                                    // LDUR - Load Register
+                                    // Format: LDUR Rt, [Rn, imm9]
+                                    // Operation: Rt = Mem[Rn + SignExtend(imm9)]
+                                    current_instruction = LDUR;
+                                    alu_src = 1;          // Use immediate
+                                    mem_to_reg = 1;       // Use memory data
+                                    lsr_in_use = 0;       // Don't use LSR
+                                    reg_write = 1;        // Write to register file
+                                    flags_should_set = 0; // Don't update flags
+                                    mem_write = 0;        // Don't write to memory
+                                    branch_taken = 0;     // Don't branch
+                                    imm_size = 0;         // Use 9-bit immediate
+                                    alu_op = 3'b010;      // Add operation (for address calculation)
+                                    
+                                    // Don't cares
+                                    reg_to_loc = 0;
+                                    uncond_branch = 0;
+                                end
+                                11'b11010011010 : begin
+                                    // LSR - Logical Shift Right
+                                    // Format: LSR Rd, Rn, shamt
+                                    // Operation: Rd = Rn >> shamt
+                                    current_instruction = LSR;
+                                    reg_to_loc = 1;       // Use Rm field (not used)
+                                    alu_src = 1;          // Not used for LSR
+                                    mem_to_reg = 0;       // Use LSR result
+                                    reg_write = 1;        // Write to register file
+                                    flags_should_set = 0; // Don't update flags
+                                    mem_write = 0;        // Don't write to memory
+                                    branch_taken = 0;     // Don't branch
+                                    imm_size = 1;         // Not used for LSR
+                                    lsr_in_use = 1;       // Use LSR unit
+                                    
+                                    // Don't cares
+                                    alu_op = 3'b000;
+                                    uncond_branch = 0;
+                                end
+                                11'b11111000000 : begin
+                                    // STUR - Store Register
+                                    // Format: STUR Rt, [Rn, imm9]
+                                    // Operation: Mem[Rn + SignExtend(imm9)] = Rt
+                                    current_instruction = STUR;
+                                    reg_to_loc = 0;       // Use Rt as data to store
+                                    alu_src = 1;          // Use immediate
+                                    flags_should_set = 0; // Don't update flags
+                                    lsr_in_use = 0;       // Don't use LSR
+                                    reg_write = 0;        // Don't write to register file
+                                    mem_write = 1;        // Write to memory
+                                    branch_taken = 0;     // Don't branch
+                                    uncond_branch = 1;    // Used for address calculation
+                                    imm_size = 0;         // Use 9-bit immediate
+                                    alu_op = 3'b010;      // Add operation (for address calculation)
+                                    
+                                    // Don't care
+                                    mem_to_reg = 0;
+                                end
+                                11'b11101011000 : begin
+                                    // SUBS - Subtract and Set Flags
+                                    // Format: SUBS Rd, Rn, Rm
+                                    // Operation: Rd = Rn - Rm, update flags
+                                    current_instruction = SUBS;
+                                    reg_to_loc = 1;       // Use Rm as second operand
+                                    alu_src = 0;          // Use register value
+                                    flags_should_set = 1; // Update flags
+                                    lsr_in_use = 0;       // Don't use LSR
+                                    mem_to_reg = 0;       // Use ALU result
+                                    reg_write = 1;        // Write to register file
+                                    mem_write = 0;        // Don't write to memory
+                                    branch_taken = 0;     // Don't branch
+                                    alu_op = 3'b011;      // Subtract operation
+                                    
+                                    // Don't cares
+                                    imm_size = 0;
+                                    uncond_branch = 0;
+                                end
+                                default: begin
+                                    // Error - Unknown instruction
+                                    current_instruction = ERROR;        
+                                    
+                                    // Set all control signals to safe values
+                                    reg_to_loc = 0;
+                                    alu_src = 0;
+                                    flags_should_set = 0;
+                                    lsr_in_use = 0;
+                                    mem_to_reg = 0;
+                                    reg_write = 0;
+                                    mem_write = 0;
+                                    branch_taken = 0;
+                                    alu_op = 3'b000;
+                                    imm_size = 0;
+                                    uncond_branch = 0;
+                                end
+                            endcase
+                        end
+                        endcase
+                    end
+                endcase
+            end
+        endcase
+    end
 
 endmodule
 
-module CPU_testbench ();
+//====================================================================================
+// CPU Testbench
+//====================================================================================
+// This module tests the CPU by applying clock and reset signals and observing behavior
 
-	parameter ClockDelay = 500000;
+module cpu_testbench();
 
+    parameter ClockDelay = 500000;  // Clock period in picoseconds
 
-	logic					clk, reset;
-	
-	CPU dut (.clock(clk), .reset);
-	
-	initial begin // Set up the clock
-		clk = 0;
-		forever #(ClockDelay/2) clk <= ~clk;
-	end
-	
-	integer i;
-	initial begin
-			//can be a lil finicky if you change reset to 0 on the clock edge so I just avoided it here
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			reset = 1; @(posedge clk); 
-			reset = 0; @(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-			@(posedge clk); 
-		$stop;
-		
-	end
+    // Testbench signals
+    logic clk, reset;
+    
+    // Instantiate the CPU
+    cpu dut (.clock(clk), .reset);
+    
+    // Clock generation
+    initial begin
+        clk = 0;
+        forever #(ClockDelay/2) clk <= ~clk;  // Toggle clock every half period
+    end
+    
+    // Test sequence
+    integer i;
+    initial begin
+        // Initialize
+        @(posedge clk); 
+        @(posedge clk); 
+        @(posedge clk); 
+        
+        // Apply reset
+        reset = 1; @(posedge clk); 
+        
+        // Release reset and run
+        reset = 0; @(posedge clk); 
+        
+        // Run for many clock cycles to observe behavior
+        repeat(200) @(posedge clk);
+        
+        // End simulation
+        $stop;
+    end
 endmodule
-

@@ -28,61 +28,60 @@ module alu(A, B, cntrl, result, negative, zero, overflow, carry_out);
 	
 	//setup logic units for our functions
 	
-	logic [63:0] baseResult, addResult, subResult, andResult, orResult, xorResult;
-	logic overflowSub, overflowAdd, overflowBase, cOutSub, cOutAdd, cOutBase;
+	logic [63:0] base_result, add_result, sub_result, and_result, or_result, xor_result;
 	
-	assign baseResult = B;
+	assign base_result = B;
 	assign overflowBase = 0;
 	assign cOutBase = 0;
 	
-	logic [63:0] AddOrSubMuxd;
+	logic [63:0] add_sub_mux_out;
 	
 	//invert bits then make use an adder to make a subtractor.
-	logic [63:0] bInverted;
-	inverter toBeSubbed(.in(B), .out(bInverted));
+	logic [63:0] b_inverted;
+	inverter subtraction_inverter(.in(B), .out(b_inverted));
 	
 	
 	genvar i;
 	generate
-		for(i = 0; i < 64; i++) begin : eachAddSubMux
-			mux2_1 addSubMux(.out(AddOrSubMuxd[i]), .i0(B[i]), .i1(bInverted[i]), .sel(cntrl[0]));
+		for(i = 0; i < 64; i++) begin : each_add_sub_mux
+			mux2_1 add_sub_mux(.out(add_sub_mux_out[i]), .i0(B[i]), .i1(b_inverted[i]), .sel(cntrl[0]));
 		end
 	endgenerate
 	
-	adder myAdder(.A(A), .B(AddOrSubMuxd), .sum(addResult), .carryOut(carry_out), .overflow(overflow));
+	adder alu_adder(.A(A), .B(add_sub_mux_out), .sum(add_result), .carryOut(carry_out), .overflow(overflow));
 	
 	
 	
 	
-	bitwiseAnd myAnd(.A, .B, .out(andResult));
-	bitwiseOr myOr(.A, .B, .out(orResult));
-	bitwiseXor myXor(.A, .B, .out(xorResult));
+	bitwise_and alu_and(.A, .B, .out(and_result));
+	bitwise_or alu_or(.A, .B, .out(or_result));
+	bitwise_xor alu_xor(.A, .B, .out(xor_result));
 	
 	logic [63:0] zeroes;
 	
 	//set result to the correct ALU function based on cntrl
 	
-	logic [63:0] muxInput [7:0];
+	logic [63:0] mux_in [7:0];
 	
-	assign muxInput [0] = baseResult;
-	assign muxInput [1] = zeroes;
-	assign muxInput [2] = addResult;
-	assign muxInput [3] = addResult;
-	assign muxInput [4] = andResult;
-	assign muxInput [5] = orResult;
-	assign muxInput [6] = xorResult;
-	assign muxInput [7] = zeroes;
+	assign mux_in [0] = base_result;
+	assign mux_in [1] = zeroes;
+	assign mux_in [2] = add_result;
+	assign mux_in [3] = add_result;
+	assign mux_in [4] = and_result;
+	assign mux_in [5] = or_result;
+	assign mux_in [6] = xor_result;
+	assign mux_in [7] = zeroes;
 	
-	logic [7:0] muxInput_Flipped [63:0];
+	logic [7:0] mux_in_flipped [63:0];
 	
 	genvar j;
 	
-	//flip muxInput
+	//flip mux_in
 	generate
 		for(i=0; i<8; i++) begin : eachBit_8
 			for (j=0; j<64; j++) begin :eachBit_64
 				always_comb begin
-					muxInput_Flipped[j][i] = muxInput[i][j];
+					mux_in_flipped[j][i] = mux_in[i][j];
 				end
 			end
 		end
@@ -91,7 +90,7 @@ module alu(A, B, cntrl, result, negative, zero, overflow, carry_out);
 	
 	generate
 		for(i = 0; i < 64; i++) begin : eachMux
-			mux_recursive #(.WIDTH(8)) aMux (.in(muxInput_Flipped[i][7:0]), .read(cntrl), .out(result[i]));
+			mux_recursive #(.WIDTH(8)) aMux (.in(mux_in_flipped[i][7:0]), .read(cntrl), .out(result[i]));
 		end
 	endgenerate
 	
@@ -100,7 +99,7 @@ module alu(A, B, cntrl, result, negative, zero, overflow, carry_out);
 	
 	//set zero and negative
 	
-	zeroChecker #(.WIDTH(64)) myChecker(.in(result), .out(zero));
+	zero_checker #(.WIDTH(64)) myChecker(.in(result), .out(zero));
 	
 	
 	assign negative = result[63];

@@ -17,11 +17,6 @@ module mux_recursive #(parameter WIDTH=32) (in, read, out);
 	output logic out;
 	
 	time gate_delay = 50;
-
-	//display the size of the mux so it's easier to debug the recursion
-	initial begin	
-		$display(WIDTH, " ",  w, " ", bits);
-	end
 		
 	generate
 			//recurse, making 2 more muxes of half the size as well as a 2x1 mux to split between thenm

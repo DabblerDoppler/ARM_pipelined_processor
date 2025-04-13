@@ -2,7 +2,10 @@
 //and determine when to write data.
 
 `timescale 1ps/1ps
-module register #(parameter WIDTH=64) (clk, in, reset, enable, out);
+module register #(
+	parameter WIDTH=64, 
+	parameter RESET=1'b0
+) (clk, in, reset, enable, out);
 	output logic [WIDTH-1:0] out;
 	input logic [WIDTH-1:0] in;
 	input logic clk, enable, reset;
@@ -13,8 +16,7 @@ module register #(parameter WIDTH=64) (clk, in, reset, enable, out);
 	
 	generate
 		for(i=0; i<WIDTH; i++) begin : eachDff
-			dff_with_enable dflipflop (.clk(clk), .in(in[i]), .reset(reset), .enable(enable), .out(out[i]));
-			//D_FF dflipflop (.clk, .q(out[i]), .reset(reset), .d(in[i]));
+			dff_with_enable #(.RESET(RESET)) dflipflop (.clk(clk), .in(in[i]), .reset(reset), .enable(enable), .out(out[i]));
 		end
 	endgenerate
 	
