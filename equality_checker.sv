@@ -1,6 +1,6 @@
 `timescale 1ps/1ps
 
-module EqualityChecker_5 (in0, in1, out);
+module equality_checker (in0, in1, out);
 
 	parameter delay = 50;
 	

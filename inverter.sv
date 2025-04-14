@@ -9,14 +9,12 @@ module inverter #(parameter WIDTH=64) (in, out);
 	genvar i;
 
 	logic [WIDTH-1:0] Nin, internalCarry, sum;
-	
-	//dunno why but modelsim gets unhappy if I just use "0" and "1" instead of these logic 
-	//same deal in adder.sv
+
 	logic zero, one;
 	assign zero = 0;
 	assign one = 1;
 	
-	fullAdder firstAdder(.A(Nin[0]), .B(zero), .Cin(one), .Cout(internalCarry[0]), .sum(out[0]));
+	full_adder first_adder(.A(Nin[0]), .B(zero), .Cin(one), .Cout(internalCarry[0]), .sum(out[0]));
 
 	generate
 		for(i=0; i < WIDTH; i++) begin : invertLoop
@@ -26,7 +24,7 @@ module inverter #(parameter WIDTH=64) (in, out);
 		
 		for(i=1; i < WIDTH; i++) begin : addLoop
 			//add one
-			fullAdder thisAdder(.A(Nin[i]), .B(zero), .Cin(internalCarry[i-1]), .Cout(internalCarry[i]), .sum(out[i]));
+			full_adder this_adder(.A(Nin[i]), .B(zero), .Cin(internalCarry[i-1]), .Cout(internalCarry[i]), .sum(out[i]));
 		end
 		
 	endgenerate

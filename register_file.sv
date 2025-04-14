@@ -39,9 +39,9 @@
 // ============================================================================
 
 
-module register_file (clk, write_enabled, write_data, write_addr, read_data_1, read_data_2, read_addr_1, read_addr_2, reset);
+module register_file (clk, write_enable, write_data, write_addr, read_data_1, read_data_2, read_addr_1, read_addr_2, reset);
 	input  logic  clk; // clock
-	input logic write_enabled, reset;
+	input logic write_enable, reset;
 	input logic [4:0] write_addr, read_addr_1, read_addr_2;
 	input logic [63:0] write_data;
 	output logic [63:0] read_data_1, read_data_2;
@@ -52,7 +52,7 @@ module register_file (clk, write_enabled, write_data, write_addr, read_data_1, r
 	
 	genvar i;
 	
-	decoder_recursive decoder (.enable(write_enabled), .in(write_addr), .out(decoderOutput));
+	decoder_recursive decoder (.enable(write_enable), .in(write_addr), .out(decoderOutput));
 	
 	
 	//create 31 registers, plus a special one at the end that's always 0
