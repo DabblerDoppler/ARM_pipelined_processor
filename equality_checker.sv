@@ -1,5 +1,8 @@
 `timescale 1ps/1ps
 
+//This module is a 5-bit equality checker. If all of the input bits are equal,
+//it outputs 1 - otherwise, it outputs 0.
+
 module equality_checker (in0, in1, out);
 
 	parameter delay = 50;
@@ -22,9 +25,10 @@ module equality_checker (in0, in1, out);
 	endgenerate
 	
 	logic tempAnd;
-	
+
+	//There's a cleaner way to do this but the original project requirements were no gates 
+	//with more than 4 inputs, so I'm keeping this implementation.
 	and #delay (tempAnd, temp[0], temp[1]);
-	
 	and #delay (out, tempAnd, temp[2], temp[3], temp[4]);
 	
 	

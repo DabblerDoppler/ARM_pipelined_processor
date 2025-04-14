@@ -1,4 +1,4 @@
-//this is a register which uses a set number of d flip flops with enables to maintain
+//this is a register which uses a parameterized number of d flip flops with enables to maintain
 //and determine when to write data.
 
 `timescale 1ps/1ps

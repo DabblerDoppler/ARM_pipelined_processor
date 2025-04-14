@@ -1,5 +1,6 @@
 `timescale 1ns/1ns
 
+//This module is a parameter scalable module which checks if all the input bits are equal to 0.
 
 module zero_checker #(parameter WIDTH=64) (in, out);
 	parameter delay = 50;
@@ -17,8 +18,8 @@ module zero_checker #(parameter WIDTH=64) (in, out);
 	
 	genvar i;
 	
+	//or all the inputs together
 	generate
-	
 		for(i=0; i < WIDTH; i+=2) begin : firstLoop
 			or #delay (temp1[i/2], in[i], in[i+1]);
 		end
@@ -33,7 +34,7 @@ module zero_checker #(parameter WIDTH=64) (in, out);
 		end
 	endgenerate
 		
-	
+	//if none of the inputs are 1, the output is equal to 0.
 	nor #delay (out, temp4[0], temp4[1], temp4[2], temp4[3]);
 
 endmodule

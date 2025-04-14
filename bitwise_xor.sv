@@ -1,5 +1,7 @@
 `timescale 1ps/1ps
 
+//Parameter-scalable XOR module which takes two WIDTH size inputs and has one WIDTH size output.
+
 module bitwise_xor #(parameter WIDTH=64) (A, B, out);
 	
 	parameter delay = 50;

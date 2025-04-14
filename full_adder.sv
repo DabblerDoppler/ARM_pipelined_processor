@@ -1,5 +1,6 @@
 `timescale 1ps/1ps
 
+//This is a standard implementation of a full-adder at the gate level.
 
 module full_adder (A, B, Cin, Cout, sum);
 

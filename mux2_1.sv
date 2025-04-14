@@ -1,5 +1,7 @@
 `timescale 1ps/1ps
 
+//this is a basic 2 to 1 multiplexer with a single bit for selection.
+
 module mux2_1 (out, i0, i1, sel);
 	parameter delay = 50;
 	output logic out;

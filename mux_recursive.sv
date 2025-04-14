@@ -1,4 +1,4 @@
-//this module creates any mux with a width of a power of two by recursively generating smaller muxes.
+//This module creates a multiplexer with a width of a power of two by recursively generating smaller muxes.
 
 `timescale 1ps/1ps
 module mux_recursive #(parameter WIDTH=32) (in, read, out);

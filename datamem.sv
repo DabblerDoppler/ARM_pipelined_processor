@@ -1,4 +1,4 @@
-// Data memory.  Supports reads and writes.  Data initialized to "X".  Note that this memory is little-endian:
+// Data memory which supports reads and writes.  Data initialized to "X".  The memory is little-endian:
 // The value of the first double-word is Mem[0]+Mem[1]*256+Mem[2]*256*256+ ... + Mem[7]*256^7
 //
 // Size is the number of bytes to transfer, and memory supports any power of 2 access size up to double-word.

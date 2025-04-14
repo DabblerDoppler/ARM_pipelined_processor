@@ -1,5 +1,5 @@
 `timescale 1ps/1ps
-//this module generates a decoder by continiously splitting the input into two outputs
+//this module generates a decoder by continiously splitting the input into two outputs,
 //and then making a new decoder recursively with those outputs.
 
 module decoder_recursive #(parameter WIDTH=32) (enable, in, out);
