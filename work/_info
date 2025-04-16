@@ -10,27 +10,27 @@ cModel Technology
 Z0 dF:/QuartusStuff/Projects/extra/extra2lol/ARM_pipelined_processor
 vadder
 Z1 DXx6 sv_std 3 std 0 22 AD7iAPLo6nTIKk<N0eo=D3
-Z2 !s110 1744603138
+Z2 !s110 1744799431
 !i10b 1
 !s100 BnX@dX5:FITBQ^V1kS12a3
 IDV[D=]EYXLfY?A@:]?klI2
 Z3 VDg1SIo80bB@j0V0VzS_@n1
 !s105 adder_sv_unit
 S1
-R0
-w1744601943
+Z4 dF:/QuartusStuff/Projects/ARM_pipelined_processor
+Z5 w1744675686
 8./adder.sv
 F./adder.sv
 L0 5
-Z4 OV;L;10.5b;63
+Z6 OV;L;10.5b;63
 r1
 !s85 0
 31
-Z5 !s108 1744603138.000000
+Z7 !s108 1744799431.000000
 !s107 ./adder.sv|
 !s90 -reportprogress|300|./adder.sv|
 !i113 1
-Z6 tCvgOpt 0
+Z8 tCvgOpt 0
 valu
 R1
 R2
@@ -40,204 +40,204 @@ II;N^0Dnm>Ie5FbcgfW5:O1
 R3
 !s105 alu_sv_unit
 S1
-R0
-w1744583657
+R4
+R5
 8./alu.sv
 F./alu.sv
 L0 21
-R4
+R6
 r1
 !s85 0
 31
-R5
+R7
 !s107 ./alu.sv|
 !s90 -reportprogress|300|./alu.sv|
 !i113 1
-R6
+R8
 vbitwise_and
 R1
 R2
 !i10b 1
-!s100 SQgea@7=]Z;>S1YNh:7`40
-IIa2TLMfkDKRJcLfUmGz3k0
+!s100 @UVoVnRA^9j^Z`RRoz;`k0
+I?;i=Dk^_]I4RSS2nJ;D=Z1
 R3
 !s105 bitwise_and_sv_unit
 S1
-R0
-w1744582653
+R4
+R5
 8./bitwise_and.sv
 F./bitwise_and.sv
-L0 3
-R4
+L0 5
+R6
 r1
 !s85 0
 31
-R5
+R7
 !s107 ./bitwise_and.sv|
 !s90 -reportprogress|300|./bitwise_and.sv|
 !i113 1
-R6
+R8
 vbitwise_or
 R1
 R2
 !i10b 1
-!s100 Qo5ZIN1ONKFIJb3T7AgH43
-I6GJBBWIm<k3BE<UzfUQ1l2
+!s100 jSR05F74FZSA0Bag@8Ela1
+ITdT=EL>of^Oi61EGiHdc93
 R3
 !s105 bitwise_or_sv_unit
 S1
-R0
-w1744582665
+R4
+R5
 8./bitwise_or.sv
 F./bitwise_or.sv
-L0 3
-R4
+L0 5
+R6
 r1
 !s85 0
 31
-R5
+R7
 !s107 ./bitwise_or.sv|
 !s90 -reportprogress|300|./bitwise_or.sv|
 !i113 1
-R6
+R8
 vbitwise_xor
 R1
 R2
 !i10b 1
-!s100 UlO>JADSn_X=Sj]]8T4A43
-Ib4ldza66gY;OJ4;ESG_WO2
+!s100 7>K?XK3Uo^i];5kV[;L5U1
+ILZebU819MXLD<CIflfoE21
 R3
 !s105 bitwise_xor_sv_unit
 S1
-R0
-w1744582689
+R4
+R5
 8./bitwise_xor.sv
 F./bitwise_xor.sv
-L0 3
-R4
+L0 5
+R6
 r1
 !s85 0
 31
-R5
+R7
 !s107 ./bitwise_xor.sv|
 !s90 -reportprogress|300|./bitwise_xor.sv|
 !i113 1
-R6
+R8
 vcpu
 R1
-Z7 !s110 1744603139
+Z9 !s110 1744799432
 !i10b 1
-!s100 8]o1`db^g>@me_Ic6Ed1F2
-IjdXkWF2]^HaSOf3Sh7G840
+!s100 X_CWVZY[>B7a8Gz;ChNdc1
+I1b]_=J2];Vo>1O4bjzo4^1
 R3
-Z8 !s105 cpu_sv_unit
+Z10 !s105 cpu_sv_unit
 S1
-R0
-Z9 w1744601479
-Z10 8./cpu.sv
-Z11 F./cpu.sv
-L0 31
 R4
+Z11 w1744799417
+Z12 8./cpu.sv
+Z13 F./cpu.sv
+L0 31
+R6
 r1
 !s85 0
 31
-Z12 !s108 1744603139.000000
-Z13 !s107 ./cpu.sv|
-Z14 !s90 -reportprogress|300|./cpu.sv|
+Z14 !s108 1744799432.000000
+Z15 !s107 ./cpu.sv|
+Z16 !s90 -reportprogress|300|./cpu.sv|
 !i113 1
-R6
+R8
 vcpu_testbench
 R1
-R7
-!i10b 1
-!s100 Ta_gi?fD;Q_Eb1mKS4AkE3
-Ime5Zna2kNHANP[]cai@3_2
-R3
-R8
-S1
-R0
 R9
+!i10b 1
+!s100 ML@X3jM=oEb;l`1>]hSco3
+IgHYdWi[3hF>mjfg?_hRcb3
+R3
 R10
-R11
-L0 939
+S1
 R4
+R11
+R12
+R13
+L0 962
+R6
 r1
 !s85 0
 31
-R12
-R13
 R14
+R15
+R16
 !i113 1
-R6
+R8
 vd_flipflop
 R1
-R7
+R9
 !i10b 1
 !s100 RM_SH1jLAJS0V[JcgIjSP0
 IHYjUl[A62^cof]61U=]FL2
 R3
 !s105 d_flipflop_sv_unit
 S1
-R0
-w1744584907
+R4
+R5
 8./d_flipflop.sv
 F./d_flipflop.sv
 L0 5
-R4
+R6
 r1
 !s85 0
 31
-R12
+R14
 !s107 ./d_flipflop.sv|
 !s90 -reportprogress|300|./d_flipflop.sv|
 !i113 1
-R6
+R8
 vdatamem
 R1
-R7
+R9
 !i10b 1
 !s100 GMBNeiNgJV6dVUhTA==id0
 IlTK;lc_f[``>QK7VCEjbG1
 R3
-Z15 !s105 datamem_sv_unit
+Z17 !s105 datamem_sv_unit
 S1
-R0
-Z16 w1744545479
-Z17 8./datamem.sv
-Z18 F./datamem.sv
-L0 12
 R4
+R5
+Z18 8./datamem.sv
+Z19 F./datamem.sv
+L0 12
+R6
 r1
 !s85 0
 31
-R12
-Z19 !s107 ./datamem.sv|
-Z20 !s90 -reportprogress|300|./datamem.sv|
+R14
+Z20 !s107 ./datamem.sv|
+Z21 !s90 -reportprogress|300|./datamem.sv|
 !i113 1
-R6
+R8
 vdatamem_testbench
 R1
-R7
+R9
 !i10b 1
 !s100 5a><cTTjz0FZk:5BaZQcE0
 I9ZDD;CJWZ8?oEQ9?`R8Sn1
 R3
-R15
-S1
-R0
-R16
 R17
-R18
-L0 70
+S1
 R4
+R5
+R18
+R19
+L0 70
+R6
 r1
 !s85 0
 31
-R12
-R19
+R14
 R20
+R21
 !i113 1
-R6
+R8
 vdecoder_recursive
 R1
 R2
@@ -247,90 +247,90 @@ I;9T9Wam^3HCogl=j2_idF2
 R3
 !s105 decoder_sv_unit
 S1
-R0
-w1744584714
+R4
+R5
 8./decoder.sv
 F./decoder.sv
 L0 5
-R4
+R6
 r1
 !s85 0
 31
-R5
+R7
 !s107 ./decoder.sv|
 !s90 -reportprogress|300|./decoder.sv|
 !i113 1
-R6
+R8
 vdff_with_enable
 R1
-R7
+R9
 !i10b 1
 !s100 lOE[ZQ]Ll>=43Eli7dC8Y1
 IR<YWQ^F;gOo`2j[ddbn[B1
 R3
 !s105 dff_with_enable_sv_unit
 S1
-R0
-w1744585058
+R4
+R5
 8./dff_with_enable.sv
 F./dff_with_enable.sv
 L0 5
-R4
+R6
 r1
 !s85 0
 31
-R12
+R14
 !s107 ./dff_with_enable.sv|
 !s90 -reportprogress|300|./dff_with_enable.sv|
 !i113 1
-R6
+R8
 vEqChecker_tb
 R1
-R7
+R9
 !i10b 1
-!s100 4TMF_mQ6Ljl;9enomD?RJ1
-IQXKi:A>ABLD1_YUO_6PmR2
+!s100 8i6zoI8f]i407l;I4mMN]3
+Iz8Wmmo5neb0IEb4Mk_ABK3
 R3
-Z21 !s105 equality_checker_sv_unit
+Z22 !s105 equality_checker_sv_unit
 S1
-R0
-Z22 w1744601562
+R4
+R5
 Z23 8./equality_checker.sv
 Z24 F./equality_checker.sv
-L0 33
-R4
+L0 37
+R6
 r1
 !s85 0
 31
-R12
+R14
 Z25 !s107 ./equality_checker.sv|
 Z26 !s90 -reportprogress|300|./equality_checker.sv|
 !i113 1
-R6
+R8
 n@eq@checker_tb
 vequality_checker
 R1
-R7
+R9
 !i10b 1
-!s100 8>5AA[4B<BRD2e^meBoBz0
-Ig>BzZ]J3>d[dQ<c<Q`RbM1
+!s100 ^EI5[oeWTe6<;mnF]malY1
+IAnlkQMkB]Kbaj`NPVJScG3
 R3
-R21
-S1
-R0
 R22
+S1
+R4
+R5
 R23
 R24
-L0 3
-R4
+L0 6
+R6
 r1
 !s85 0
 31
-R12
+R14
 R25
 R26
 !i113 1
-R6
+R8
 vEqualityChecker_5
 R1
 !s110 1744601484
@@ -338,14 +338,14 @@ R1
 !s100 iZ^a@LJSJWbDb<Kf0mmSK0
 Io3]CB1NfMOn6F8BbhC0o52
 R3
-R21
+R22
 S1
 R0
-R16
+w1744545479
 R23
 R24
 L0 3
-R4
+R6
 r1
 !s85 0
 31
@@ -353,397 +353,397 @@ r1
 R25
 R26
 !i113 1
-R6
+R8
 n@equality@checker_5
 vfull_adder
 R1
 R2
 !i10b 1
-!s100 iom@QYN7FHUJm^o]9O^D<2
-I2kYm4I=6nk:N3U4lmH_CP2
+!s100 Jc40IHN``b5d1]k<:78HY0
+IoG7^QTLgznQ=khAd_BjCi2
 R3
 !s105 full_adder_sv_unit
 S1
-R0
-w1744583265
+R4
+R5
 8./full_adder.sv
 F./full_adder.sv
-L0 4
-R4
+L0 5
+R6
 r1
 !s85 0
 31
-R5
+R7
 !s107 ./full_adder.sv|
 !s90 -reportprogress|300|./full_adder.sv|
 !i113 1
-R6
+R8
 vinstructmem
 R1
-R7
+R9
 !i10b 1
-!s100 _l@fl@?boB3O9>NSfAze40
-I8M4zUBl3XOeen]Odl:Sn_0
+!s100 41LaX<RK`;Z7bCT[Ie]:13
+IP0]Y=f5djcZ5R_U2TUfdo1
 R3
 Z27 !s105 instructmem_sv_unit
 S1
-R0
-Z28 w1744585036
+R4
+Z28 w1744779555
 Z29 8./instructmem.sv
 Z30 F./instructmem.sv
 L0 116
-R4
+R6
 r1
 !s85 0
 31
-R12
+R14
 Z31 !s107 ./instructmem.sv|
 Z32 !s90 -reportprogress|300|./instructmem.sv|
 !i113 1
-R6
+R8
 vinstructmem_testbench
 R1
-R7
+R9
 !i10b 1
 !s100 ]:KJ_W>ElkleTE66KS3c33
 IS?<`EH?3Bia37KE00bg6d2
 R3
 R27
 S1
-R0
+R4
 R28
 R29
 R30
 L0 156
-R4
+R6
 r1
 !s85 0
 31
-R12
+R14
 R31
 R32
 !i113 1
-R6
+R8
 vinverter
 R1
-R2
+R9
 !i10b 1
-!s100 mCAn=@TD=67^14B85WIcd2
-I1E>gI2S6T;<NY`o[d]j]z3
+!s100 ;?ALUzaHm:Ke_ISgjBHKG3
+I492WKG]_PmikcIc]7C_>h2
 R3
 !s105 inverter_sv_unit
 S1
-R0
-w1744602700
+R4
+R5
 8./inverter.sv
 F./inverter.sv
-L0 3
-R4
+L0 6
+R6
 r1
 !s85 0
 31
-R5
+R14
 !s107 ./inverter.sv|
 !s90 -reportprogress|300|./inverter.sv|
 !i113 1
-R6
+R8
 vlinear_shift_left
 R1
-R7
+R9
 !i10b 1
 !s100 b1W>1BiB@@WMKaznKKmE82
 IhCf?cS?AmeZOgUoUBOH;:0
 R3
 Z33 !s105 linear_shift_left_sv_unit
 S1
-R0
-Z34 w1744582499
-Z35 8./linear_shift_left.sv
-Z36 F./linear_shift_left.sv
-L0 45
 R4
+R5
+Z34 8./linear_shift_left.sv
+Z35 F./linear_shift_left.sv
+L0 45
+R6
 r1
 !s85 0
 31
-R12
-Z37 !s107 ./linear_shift_left.sv|
-Z38 !s90 -reportprogress|300|./linear_shift_left.sv|
+R14
+Z36 !s107 ./linear_shift_left.sv|
+Z37 !s90 -reportprogress|300|./linear_shift_left.sv|
 !i113 1
-R6
+R8
 vlinear_shift_right
 R1
-R7
+R9
 !i10b 1
 !s100 B0zdo2^M365HJbc2:c`CV0
 IKZ@Xkh21Jfe3R8>_D92^j2
 R3
 !s105 linear_shift_right_sv_unit
 S1
-R0
-w1744581922
+R4
+R5
 8./linear_shift_right.sv
 F./linear_shift_right.sv
 L0 43
-R4
+R6
 r1
 !s85 0
 31
-R12
+R14
 !s107 ./linear_shift_right.sv|
 !s90 -reportprogress|300|./linear_shift_right.sv|
 !i113 1
-R6
+R8
 vlinear_shift_right_dynamic
 R1
-R7
+R9
 !i10b 1
 !s100 Dg38:BKi73l8VHRJfPjVA2
 I=649]C:QW@KOHEFj:CkeC3
 R3
 !s105 linear_shift_right_dynamic_sv_unit
 S1
-R0
-w1744582513
+R4
+R5
 8./linear_shift_right_dynamic.sv
 F./linear_shift_right_dynamic.sv
-Z39 L0 51
-R4
+Z38 L0 51
+R6
 r1
 !s85 0
 31
-R12
+R14
 !s107 ./linear_shift_right_dynamic.sv|
 !s90 -reportprogress|300|./linear_shift_right_dynamic.sv|
 !i113 1
-R6
+R8
 vLSL_tb
 R1
-R7
+R9
 !i10b 1
 !s100 f8Hk5co>m^CaK6NgVdVVf0
 IJT>B3BCf1`@l_GeTo:c_;1
 R3
 R33
 S1
-R0
+R4
+R5
 R34
 R35
-R36
 L0 81
-R4
+R6
 r1
 !s85 0
 31
-R12
+R14
+R36
 R37
-R38
 !i113 1
-R6
+R8
 n@l@s@l_tb
 vmux2_1
 R1
-R2
+R9
 !i10b 1
-!s100 Fa?F3DTe20N68?=[ediH]1
-IYh[azTA1gn^M5_FeWA>4Z0
+!s100 >=d:3knRamR=B6>iXDQI03
+IT<PM]9zMeLfleSeGAQm<82
 R3
-Z40 !s105 mux2_1_sv_unit
+Z39 !s105 mux2_1_sv_unit
 S1
-R0
-Z41 w1744545480
-Z42 8./mux2_1.sv
-Z43 F./mux2_1.sv
-L0 3
 R4
+R5
+Z40 8./mux2_1.sv
+Z41 F./mux2_1.sv
+L0 5
+R6
 r1
 !s85 0
 31
-R5
-Z44 !s107 ./mux2_1.sv|
-Z45 !s90 -reportprogress|300|./mux2_1.sv|
+R14
+Z42 !s107 ./mux2_1.sv|
+Z43 !s90 -reportprogress|300|./mux2_1.sv|
 !i113 1
-R6
+R8
 vmux2_1_testbench
 R1
-R2
+R9
 !i10b 1
-!s100 do4S`?>Ynoa1Q;VNbO6z52
-IQmek``SXhXJlab2:ILj5l1
+!s100 2NFi_YXfZUM8CmhVih6ni1
+I8o[LJ=O3d<FoPCMa@l5L43
 R3
-R40
+R39
 S1
-R0
-R41
-R42
-R43
-L0 20
 R4
+R5
+R40
+R41
+L0 22
+R6
 r1
 !s85 0
 31
-R5
-R44
-R45
+R14
+R42
+R43
 !i113 1
-R6
+R8
 vmux_recursive
 R1
-R2
+R9
 !i10b 1
 !s100 :nWP=aX4HAE8WIkHU6g5D2
 I:31jY^]mJA^n[Z=hXa0L>2
 R3
-Z46 !s105 mux_recursive_sv_unit
+Z44 !s105 mux_recursive_sv_unit
 S1
-R0
-Z47 w1744550149
-Z48 8./mux_recursive.sv
-Z49 F./mux_recursive.sv
-L0 4
 R4
+R5
+Z45 8./mux_recursive.sv
+Z46 F./mux_recursive.sv
+L0 4
+R6
 r1
 !s85 0
 31
-R5
-Z50 !s107 ./mux_recursive.sv|
-Z51 !s90 -reportprogress|300|./mux_recursive.sv|
+R14
+Z47 !s107 ./mux_recursive.sv|
+Z48 !s90 -reportprogress|300|./mux_recursive.sv|
 !i113 1
-R6
+R8
 vmux_tb
 R1
-R2
+R9
 !i10b 1
 !s100 IiF6=8L9<Jd=;[YXkVl9h0
 Ika]RWZ=0Rb<o9k4Raa:8W1
 R3
-R46
+R44
 S1
-R0
-R47
-R48
-R49
-R39
 R4
+R5
+R45
+R46
+R38
+R6
 r1
 !s85 0
 31
-R5
-R50
-R51
+R14
+R47
+R48
 !i113 1
-R6
+R8
 vregister
 R1
-R7
+R9
 !i10b 1
 !s100 Be[AS5?J3CQNd3FBhN07O2
 IZb@T1fcj7zKeKceR<Vdo72
 R3
-Z52 !s105 register_sv_unit
+Z49 !s105 register_sv_unit
 S1
-R0
-Z53 w1744584535
-Z54 8./register.sv
-Z55 F./register.sv
-L0 5
 R4
+R5
+Z50 8./register.sv
+Z51 F./register.sv
+L0 5
+R6
 r1
 !s85 0
 31
-R12
-Z56 !s107 ./register.sv|
-Z57 !s90 -reportprogress|300|./register.sv|
+R14
+Z52 !s107 ./register.sv|
+Z53 !s90 -reportprogress|300|./register.sv|
 !i113 1
-R6
+R8
 vregister_file
 R1
-R7
+R9
 !i10b 1
 !s100 HX=10`Xm>]W<5ehFUgllS0
 IEY^Ujag4YV0:ZJUh93f?D0
 R3
 !s105 register_file_sv_unit
 S1
-R0
-w1744602786
+R4
+R5
 8./register_file.sv
 F./register_file.sv
 L0 42
-R4
+R6
 r1
 !s85 0
 31
-R12
+R14
 !s107 ./register_file.sv|
 !s90 -reportprogress|300|./register_file.sv|
 !i113 1
-R6
+R8
 vregister_tb
 R1
-R7
+R9
 !i10b 1
 !s100 zZUlEfaOzWMH`7CWJ[?h81
 I^0VX<2?_W`gC^Xa>=e@aV3
 R3
-R52
+R49
 S1
-R0
-R53
-R54
-R55
-L0 25
 R4
+R5
+R50
+R51
+L0 25
+R6
 r1
 !s85 0
 31
-R12
-R56
-R57
+R14
+R52
+R53
 !i113 1
-R6
+R8
 vsign_extend
 R1
-R7
+R9
 !i10b 1
 !s100 o6RDIPdNnobYOS>T3a[T>0
 I5zXR3>S=PDk4TP6mHlMkM0
 R3
 !s105 sign_extend_sv_unit
 S1
-R0
-w1744581201
+R4
+R5
 8./sign_extend.sv
 F./sign_extend.sv
 L0 44
-R4
+R6
 r1
 !s85 0
 31
-R12
+R14
 !s107 ./sign_extend.sv|
 !s90 -reportprogress|300|./sign_extend.sv|
 !i113 1
-R6
+R8
 vzero_checker
 R1
-R2
+R9
 !i10b 1
-!s100 ll__nH^Z9f`J]?[02<VO[3
-IFYiPaKRlV]El<Gab:C24R2
+!s100 9WPLLR?lfC?f@BjK=Ad]P3
+IVMO7S4NLWC?1`c5f:m<Qc2
 R3
 !s105 zero_checker_sv_unit
 S1
-R0
-w1744582784
+R4
+w1744681973
 8./zero_checker.sv
 F./zero_checker.sv
-L0 4
-R4
+L0 5
+R6
 r1
 !s85 0
 31
-R5
+R7
 !s107 ./zero_checker.sv|
 !s90 -reportprogress|300|./zero_checker.sv|
 !i113 1
-R6
+R8

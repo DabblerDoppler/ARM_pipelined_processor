@@ -49,7 +49,7 @@ module cpu(clock, reset);
 
     // Instruction type enumeration for better readability
     typedef enum { 
-        RESET, B, BLT, CBZ, ADDI, ADDS, AND, EOR, LDUR, LSR, STUR, SUBS, NOOP, ERROR 
+        RESET, B, BLT, CBZ, ADDI, ADDS, AND, EOR, LDUR, LSR, STUR, SUBS, ERROR 
     } instruction_type;    // Defines all supported instruction types
 
     instruction_type current_instruction;    // Current instruction type being processed
@@ -127,8 +127,7 @@ module cpu(clock, reset);
     logic [63:0] imm12_extended;       // Zero-extended 12-bit immediate for ALU operations
     logic [63:0] cond_addr_extended;   // Sign-extended conditional branch address
     logic [63:0] branch_addr_extended; // Sign-extended unconditional branch address
-    logic [63:0] ex_branch_addr_extended; // Sign-extended unconditional branch address
-	logic [63:0] rf_cond_addr_extended, ex_cond_addr_extended, mem_cond_addr_extended; //for cbz delayed branching
+	logic [63:0] rf_cond_addr_extended, ex_cond_addr_extended; //for cbz delayed branching
     
     // ALU and data signals
     logic [63:0] write_to_register;    // Data to be written to register file
@@ -143,22 +142,13 @@ module cpu(clock, reset);
     
     // Program counter and branch signals
     logic [63:0] program_counter;      // Current program counter value
-    logic [63:0] ex_program_counter;   // 1-stage delayed pipelined program counter value
     logic [63:0] chosen_addr;          // Selected branch address based on branch type
     logic [63:0] shifted_addr;         // Branch address shifted left by 2 bits
     logic [63:0] next_count_branch;    // Next PC if branch is taken
 	logic [63:0] cbz_next_branch;      // Next PC if CBZ is taken
-	logic [63:0] branch_addr_final;    // Next PC if any branch is taken after pipeline
     logic [63:0] next_count;           // Next PC if branch is not taken (PC+4)
 	logic [63:0] temp_addr;			   // Mux input for branch selection
     logic [63:0] next_addr;            // Final next PC value
-
-    // Single bit pipelined branch control signals
-    logic ex_uncond_branch;             // Pipelined unconditional branch signal 
-    logic ex_branch_taken_final;        // Combined branch taken signal in EX stage
-    logic branch_taken_final;           // Final branch taken signal after pipelining
-    logic ex_cbz_branch_taken;          // CBZ branch taken signal in EX stage
-    logic ex_delayed_branch;            // Delayed branch signal for CBZ in EX stage
 
     //====================================================================================
     // PIPELINE REGISTERS
@@ -171,13 +161,12 @@ module cpu(clock, reset);
     logic [63:0] if_out;               // Output from IF stage
     logic [63:0] rf_a_out;             // First operand from RF stage
     logic [63:0] rf_b_out;             // Second operand from RF stage
-    logic [4:0] rf_w_out;             // Destination register address from RF stage
+    logic [63:0] rf_w_out;             // Destination register address from RF stage
     logic [63:0] ex_out;               // ALU/LSR result from EX stage
-    logic [63:0] ex_a_out;             // Output from EX stage for operand A (needed for forwarding)
     logic [63:0] ex_b_out;             // Bypass data from EX stage (for store instructions)
-    logic [4:0] ex_w_out;             // Destination register address from EX stage
+    logic [63:0] ex_w_out;             // Destination register address from EX stage
     logic [63:0] mem_out;              // Data from MEM stage
-    logic [4:0] mem_w_out;            // Destination register address from MEM stage
+    logic [63:0] mem_w_out;            // Destination register address from MEM stage
     logic [63:0] rf_bypass_out;        // Bypass data for store instructions
     
     // Instruction pipeline registers
@@ -259,42 +248,6 @@ module cpu(clock, reset);
     logic wb_reg_write;                // Register write in WB stage
 
     //====================================================================================
-    // FLUSHING LOGIC
-    //====================================================================================
-
-    logic flush_rf;                    // When high, flush IF and ID.
-    logic flush_ex;                    // When high, flush IF, ID, and EX.
-    logic reset_flush_rf;              // Register .reset input, = flush_rf | flush_ex | reset
-    logic reset_flush_ex;              // Register .reset input, = flush_ex | reset
-
-
-    //====================================================================================
-    // OPCODE CONSTANTS
-    //====================================================================================
-
-// Top 6-bit opcodes
-localparam [5:0] OPCODE_B    = 6'b000101;
-
-// Top 8-bit opcodes
-localparam [7:0] OPCODE_BLT  = 8'b01010100;
-localparam [7:0] OPCODE_CBZ  = 8'b10110100;
-
-// Top 10-bit opcodes
-localparam [9:0] OPCODE_ADDI = 10'b1001000100;
-
-// Top 11-bit opcodes
-localparam [10:0] OPCODE_ADDS = 11'b10101011000;
-localparam [10:0] OPCODE_AND  = 11'b10001010000;
-localparam [10:0] OPCODE_EOR  = 11'b11001010000;
-localparam [10:0] OPCODE_LDUR = 11'b11111000010;
-localparam [10:0] OPCODE_LSR  = 11'b11010011010;
-localparam [10:0] OPCODE_STUR = 11'b11111000000;
-localparam [10:0] OPCODE_SUBS = 11'b11101011000;
-
-// Special opcodes
-localparam [26:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
-
-    //====================================================================================
     // INSTRUCTION FETCH STAGE
     //====================================================================================
     // This stage fetches instructions from instruction memory based on the program counter
@@ -304,62 +257,45 @@ localparam [26:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     assign branch_addr_26 = rf_instruction[25:0];
 
     // Sign extend branch address fields to 64 bits
-    sign_extend #(.IMMLENGTH(19)) cond_extend   (.in(cond_addr_19),   .is_signed(1'b1), .out(cond_addr_extended));
+    sign_extend #(.IMMLENGTH(19)) cond_extend   (.in(cond_addr_19), .is_signed(1'b1), .out(cond_addr_extended));
     sign_extend #(.IMMLENGTH(26)) branch_extend (.in(branch_addr_26), .is_signed(1'b1), .out(branch_addr_extended));
 	
-	//pipeline for b
-	register rf_addr_26_reg (.clk(clock), .in(branch_addr_extended), .reset(reset), .enable(pipeline_enable), .out(ex_branch_addr_extended));
-    register #(.WIDTH(1)) rf_uncond_branch_reg (.clk(clock), .in(uncond_branch), .reset(reset), .enable(pipeline_enable), .out(ex_uncond_branch));
-    register #(.WIDTH(1)) rf_branch_taken_reg (.clk(clock), .in(branch_taken), .reset(reset), .enable(pipeline_enable), .out(ex_branch_taken));
-	register rf_pc_reg (.clk(clock), .in(program_counter), .reset(reset), .enable(pipeline_enable), .out(ex_program_counter));
-	register #(.WIDTH(1)) rf_cbz_should_branch_reg (.clk(clock), .in(cbz_should_branch), .reset(reset), .enable(pipeline_enable), .out(ex_cbz_should_branch));
-
-
-	//Pipeline for cbz and conditional branches
-	register rf_cond_addr_19_reg (.clk(clock), .in(cond_addr_extended), .reset(reset), .enable(pipeline_enable), .out(ex_cond_addr_extended));
-	register ex_cond_addr_19_reg (.clk(clock), .in(ex_cond_addr_extended), .reset(reset), .enable(pipeline_enable), .out(mem_cond_addr_extended));
-    register #(.WIDTH(1)) rf_cbz_branch_taken_reg (.clk(clock), .in(cbz_branch_taken), .reset(reset), .enable(pipeline_enable), .out(ex_cbz_branch_taken));
-
-    //Pipeline for all branches
-	register branch_addr_final_reg (.clk(clock), .in(next_count_branch), .reset(reset), .enable(pipeline_enable), .out(branch_addr_final));
-	register #(.WIDTH(1)) branch_taken_final_reg (.clk(clock), .in(ex_branch_taken_final), .reset(reset), .enable(pipeline_enable), .out(branch_taken_final));
+	
+	//Pipeline for cbz
+	register rf_cond_addr_19_reg (.clk(clock), .in(cond_addr_extended), .reset(reset), .enable(pipeline_enable), .out(rf_cond_addr_extended));
+	register ex_cond_addr_19_reg (.clk(clock), .in(rf_cond_addr_extended), .reset(reset), .enable(pipeline_enable), .out(ex_cond_addr_extended));
 	
 	
+	register #(.WIDTH(1)) ex_cbz_should_branch_reg (.clk(clock), .in(ex_cbz_should_branch), .reset(reset), .enable(pipeline_enable), .out(cbz_should_branch));
 
     // Select between conditional and unconditional branch address
     genvar i;
     generate
         for(i = 0; i < 64; i++) begin : each_br_addr_bit
-		mux2_1 branch_addr_mux (.out(temp_addr[i]), .i0(cond_addr_extended[i]), .i1(branch_addr_extended[i]), .sel(uncond_branch));
-		mux2_1 cbz_addr_mux    (.out(chosen_addr[i]), .i0(temp_addr[i]), .i1(cond_addr_extended[i]),  .sel(cbz_branch_taken));
+            mux2_1 branch_addr_mux (.out(temp_addr[i]), .i0(cond_addr_extended[i]), .i1(branch_addr_extended[i]), .sel(uncond_branch));
+			mux2_1 cbz_addr_mux    (.out(chosen_addr[i]), .i0(temp_addr[i]), .i1(ex_cond_addr_extended[i]),  .sel(cbz_branch_taken));
         end
     endgenerate
 
     // Shift the address left by 2 bits (multiply by 4 for byte addressing)
-    linear_shift_left #(.SHIFT(2)) addr_shifter (.in(chosen_addr), .enable(1'b1), .out(shifted_addr));
+    linear_shift_left #(.SHIFT(2)) addr_shifter (.in(chosen_addr), .enable(1), .out(shifted_addr));
 
     // Calculate the next address options
-    adder branch_adder (.A(shifted_addr), .B(ex_program_counter), .sum(next_count_branch), .carryOut(), .overflow());
-    adder count_adder  (.A(program_counter), .B(64'h4), .sum(next_count), .carryOut(), .overflow());
+    adder branch_adder (.A(shifted_addr), .B(program_counter), .sum(next_count_branch), .carryOut(), .overflow());
+    adder count_adder  (.A(program_counter), .B(4), .sum(next_count), .carryOut(), .overflow());
 	
-	or(ex_branch_taken_final, branch_taken, cbz_branch_taken);
+	or(branch_taken_final, branch_taken, cbz_branch_taken);
 
     // Select between PC+4 and branch target based on branch_taken signal
     generate
         for(i = 0; i < 64; i++) begin : each_br_sel_addr_bit
-            mux2_1 branch_sel_mux (.out(next_addr[i]), .i0(next_count[i]), .i1(branch_addr_final[i]), .sel(branch_taken_final));
+            mux2_1 branch_sel_mux (.out(next_addr[i]), .i0(next_count[i]), .i1(next_count_branch[i]), .sel(branch_taken_final));
         end
     endgenerate
 	
-	//if this is true, the register is 0 and cbz should branch.
-	zero_checker cbz_zero_checker (.in(rf_a_input), .out(cbz_should_branch));
-
-	//if we're at the right stage for CBZ to branch and the register it checked is 0, branch.
-	//NOTE: This should be a higher priority branch than other branches because those instructions will be squashed if we take this.
-	and #delay (cbz_branch_taken, delayed_branch, cbz_should_branch);
 	
-    // Branch condition logic for B.LT instruction
-    xor #delay (blt_should_branch, negative_flag, overflow_flag);  // B.LT branches when N≠V
+	//if this is true, the register is 0 and cbz should branch.
+	zero_checker cbz_zero_checker (.in(rf_a_out), .out(ex_cbz_should_branch));
 
     // Program counter register
     register pc_register (.clk(clock), .in(next_addr), .reset(reset), .enable(1'b1), .out(program_counter));
@@ -396,7 +332,7 @@ localparam [26:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
         .clk(clock), 
         .write_enable(wb_reg_write),       // Write enable from WB stage
         .write_data(mem_out),           // Data to write from MEM stage
-        .write_addr(mem_w_out[4:0]),     // Register to write to from MEM stage
+        .write_addr(mem_w_out),     // Register to write to from MEM stage
         .read_data_1(data_a),            // First operand output
         .read_data_2(data_b),            // Second operand output
         .read_addr_1(rf_rn_addr),    // First register address
@@ -407,6 +343,14 @@ localparam [26:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     // Sign extension for immediate values
     sign_extend #(.IMMLENGTH(9)) d_extend (.in(rf_d_addr_9), .is_signed(1'b1), .out(d_addr_extended));
     sign_extend #(.IMMLENGTH(12)) imm12_extend (.in(rf_imm_12), .is_signed(1'b0), .out(imm12_extended));
+
+	
+	//if we're at the right stage for CBZ to branch and the register it checked is 0, branch.
+	//NOTE: This should be a higher priority branch than other branches because those instructions will be squashed if we take this.
+	and #delay (cbz_branch_taken, mem_delayed_branch, cbz_should_branch);
+	
+    // Branch condition logic for B.LT instruction
+    xor #delay (blt_should_branch, negative_flag, overflow_flag);  // B.LT branches when N≠V
 
     // Select between different immediate values and register values for ALU input
     generate
@@ -458,7 +402,7 @@ localparam [26:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
         .read_enable(mem_mem_to_reg),  // Read enable signal
         .write_data(ex_b_out),         // Data to write for store instructions
         .clk(clock),                   // System clock
-        .xfer_size(4'b1000),           // Transfer size in bytes (always 8 for this implementation)
+        .xfer_size(8),                 // Transfer size in bytes (always 8 for this implementation)
         .read_data(data_out)           // Data read from memory
     );
 
@@ -485,7 +429,7 @@ localparam [26:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     register rf_a_reg (.clk(clock), .in(rf_a_input), .reset(reset), .enable(pipeline_enable), .out(rf_a_out));
     register rf_b_reg (.clk(clock), .in(alu_b_input), .reset(reset), .enable(pipeline_enable), .out(rf_b_out));
     register rf_bypass_reg (.clk(clock), .in(rf_b_input), .reset(reset), .enable(pipeline_enable), .out(rf_bypass_out));
-    register #(.WIDTH(5)) rf_w_reg (.clk(clock), .in(rf_rd_addr[4:0]), .reset(reset), .enable(pipeline_enable), .out(rf_w_out));
+    register rf_w_reg (.clk(clock), .in(rf_rd_addr), .reset(reset), .enable(pipeline_enable), .out(rf_w_out));
 
     //-----------------------------------------------------------------------------------
     // Execute Stage Pipeline Registers
@@ -495,7 +439,7 @@ localparam [26:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     register ex_reg   (.clk(clock), .in(alu_result), .reset(reset), .enable(pipeline_enable), .out(ex_out));
 	register ex_a_reg (.clk(clock), .in(rf_a_out), .reset(reset), .enable(pipeline_enable), .out(ex_a_out));
     register ex_b_reg (.clk(clock), .in(rf_bypass_out), .reset(reset), .enable(pipeline_enable), .out(ex_b_out));
-    register #(.WIDTH(5)) ex_w_reg (.clk(clock), .in(rf_w_out), .reset(reset), .enable(pipeline_enable), .out(ex_w_out));
+    register ex_w_reg (.clk(clock), .in(rf_w_out), .reset(reset), .enable(pipeline_enable), .out(ex_w_out));
 
     //-----------------------------------------------------------------------------------
     // Memory Stage Pipeline Registers
@@ -503,7 +447,7 @@ localparam [26:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     
     // MEM stage data registers
     register mem_reg (.clk(clock), .in(write_to_register), .reset(reset), .enable(pipeline_enable), .out(mem_out));
-    register #(.WIDTH(5)) mem_w_reg (.clk(clock), .in(ex_w_out), .reset(reset), .enable(pipeline_enable), .out(mem_w_out));
+    register mem_w_reg (.clk(clock), .in(ex_w_out), .reset(reset), .enable(pipeline_enable), .out(mem_w_out));
 
     //-----------------------------------------------------------------------------------
     // Instruction Pipeline Registers
@@ -520,10 +464,10 @@ localparam [26:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     // Pass the instruction through the pipeline
     // By resetting to one instead of 0, the forwarding unit won't try to forward anything
     // since it'll always be at x31 (register that can't be written to)
-    register #(.RESET(1'b1), .WIDTH(32)) rf_instruction_reg (.clk(clock), .in(instruction), .reset(reset), .enable(pipeline_enable), .out(rf_instruction));
-    register #(.RESET(1'b1), .WIDTH(32)) ex_instruction_reg (.clk(clock), .in(rf_instruction), .reset(reset), .enable(pipeline_enable), .out(ex_instruction));
-    register #(.RESET(1'b1), .WIDTH(32)) mem_instruction_reg (.clk(clock), .in(ex_instruction), .reset(reset), .enable(pipeline_enable), .out(mem_instruction));
-    register #(.RESET(1'b1), .WIDTH(32)) wb_instruction_reg (.clk(clock), .in(mem_instruction), .reset(reset), .enable(pipeline_enable), .out(wb_instruction));
+    register #(.RESET(1'b1)) rf_instruction_reg (.clk(clock), .in(instruction), .reset(reset), .enable(pipeline_enable), .out(rf_instruction));
+    register #(.RESET(1'b1)) ex_instruction_reg (.clk(clock), .in(rf_instruction), .reset(reset), .enable(pipeline_enable), .out(ex_instruction));
+    register #(.RESET(1'b1)) mem_instruction_reg (.clk(clock), .in(ex_instruction), .reset(reset), .enable(pipeline_enable), .out(mem_instruction));
+    register #(.RESET(1'b1)) wb_instruction_reg (.clk(clock), .in(mem_instruction), .reset(reset), .enable(pipeline_enable), .out(wb_instruction));
 
     //-----------------------------------------------------------------------------------
     // Control Signal Pipeline Registers
@@ -727,16 +671,15 @@ localparam [26:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
 
     //====================================================================================
     // RESET LOGIC
-	//I don't think this is necessary so it's commented out
     //====================================================================================
     // Initialize CPU state on reset
-    /*
+    
     always_ff @(posedge clock) begin
         if(reset) begin
             program_counter = 0;
             next_addr = 0;
-            instruction =    OPCODE_NOOP;  // NOP instruction
-            rf_instruction = OPCODE_NOOP;  // NOP instruction
+            instruction =    32'b10010001000000000000001111100000;  // NOP instruction
+            rf_instruction = 32'b10010001000000000000001111100000;  // NOP instruction
             debug_mode = 0;
             zero_flag = 0;
             negative_flag = 0;
@@ -744,192 +687,245 @@ localparam [26:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
             carryout_flag = 0;
         end
     end
-	*/
+
     //====================================================================================
     // INSTRUCTION DECODER
     //====================================================================================
     // This combinational logic decodes the instruction and sets control signals
     
-always_comb begin
-    case (rf_instruction[31:26])
-        OPCODE_B: begin
-            current_instruction = B;
-            reg_write = 0;
-            mem_write = 0;
-            branch_taken = 1;
-            uncond_branch = 1;
-            flags_should_set = 0;
-            delayed_branch = 0;
-
-            reg_to_loc = 0;
-            alu_src = 0;
-            lsr_in_use = 0;
-            alu_op = 3'b000;
-            mem_to_reg = 0;
-            imm_size = 0;
-        end
-        default: begin
-            case (rf_instruction[31:24])
-                OPCODE_BLT: begin
-                    current_instruction = BLT;
-                    reg_to_loc = 0;
-                    alu_src = 0;
-                    reg_write = 0;
-                    mem_write = 0;
-                    lsr_in_use = 0;
-                    branch_taken = blt_should_branch;
-                    uncond_branch = 0;
-                    delayed_branch = 0;
-                    flags_should_set = 0;
-                    alu_op = 3'b000;
-                    mem_to_reg = 0;
-                    imm_size = 0;
-                end
-                OPCODE_CBZ: begin
-                    current_instruction = CBZ;
-                    reg_to_loc = 0;
-                    alu_src = 0;
-                    reg_write = 0;
-                    mem_write = 0;
-                    lsr_in_use = 0;
-                    flags_should_set = 0;
-                    branch_taken = 0;
-                    uncond_branch = 0;
-                    delayed_branch = 1;
-                    alu_op = 3'b000;
-                    mem_to_reg = 0;
-                    imm_size = 0;
-                end
-                default: begin
-                    case (rf_instruction[31:22])
-                        OPCODE_ADDI: begin
-				if(rf_instruction[31:5] === OPCODE_NOOP[31:5]) begin
-					current_instruction = NOOP;
-				end else begin
-                            		current_instruction = ADDI;
-				end
-                            reg_to_loc = 1;
-                            alu_src = 1;
-                            mem_to_reg = 0;
-                            reg_write = 1;
-                            flags_should_set = 0;
-                            mem_write = 0;
-                            lsr_in_use = 0;
-                            branch_taken = 0;
-                            imm_size = 1;
-                            alu_op = 3'b010;
-                            delayed_branch = 0;
+    always_comb begin
+        case(rf_instruction[31:26])
+            6'b000101 : begin
+                // B - Unconditional Branch
+                // Format: B imm26
+                // Operation: PC = PC + SignExtend(imm26 << 2)
+                current_instruction = B;
+                reg_write = 0;          // Don't write to register file
+                mem_write = 0;          // Don't write to memory
+                branch_taken = 1;       // Take the branch
+                uncond_branch = 1;      // Unconditional branch
+                flags_should_set = 0;   // Don't update flags
+				delayed_branch = 0; 
+                
+                // Don't cares - these signals aren't used for this instruction
+                reg_to_loc = 0;
+                alu_src = 0;
+                lsr_in_use = 0;
+                alu_op = 3'b000;
+                mem_to_reg = 0;
+                imm_size = 0;
+            end
+            default: begin
+                case(rf_instruction[31:24])
+                    8'b01010100 : begin
+                        // B.LT - Branch if Less Than (N≠V)
+                        // Format: B.LT imm19
+                        // Operation: if (N≠V) PC = PC + SignExtend(imm19 << 2)
+                        current_instruction = BLT;                
+                        reg_to_loc = 0;         // Don't care for branch
+                        alu_src = 0;            // Don't care for branch
+                        reg_write = 0;          // Don't write to register file
+                        mem_write = 0;          // Don't write to memory
+                        lsr_in_use = 0;         // Don't use LSR
+                        branch_taken = blt_should_branch;  // Branch if N≠V
+                        uncond_branch = 0;      // Conditional branch
+						delayed_branch = 0; 
+                        flags_should_set = 0;   // Don't update flags
+                        alu_op = 3'b000;        // Don't care for branch
+                        
+                        // Don't cares
+                        mem_to_reg = 0;
+                        imm_size = 0;
+                    end
+                    8'b10110100 : begin
+                        // CBZ - Compare and Branch if Zero
+                        // Format: CBZ Rt, imm19
+                        // Operation: if (Rt == 0) PC = PC + SignExtend(imm19 << 2)
+                        current_instruction = CBZ;
+                        reg_to_loc = 0;         // Use Rt as operand
+                        alu_src = 0;            // Use register value
+                        reg_write = 0;          // Don't write to register file
+                        mem_write = 0;          // Don't write to memory
+                        lsr_in_use = 0;         // Don't use LSR
+                        flags_should_set = 0;   // Don't update flags
+                        branch_taken = 0;       // Branch if zero flag is set
+                        uncond_branch = 0;      // Conditional branch
+						delayed_branch = 1;     // Special branch for CBZ since we need to wait for rf
+                        alu_op = 3'b000;        // Pass B (for comparison)
+                        
+                        // Don't cares
+                        mem_to_reg = 0;
+                        imm_size = 0;
+                    end
+                    default: begin
+                        case(rf_instruction[31:22])
+                        10'b1001000100 : begin
+                            // ADDI - Add Immediate
+                            // Format: ADDI Rd, Rn, imm12
+                            // Operation: Rd = Rn + ZeroExtend(imm12)
+                            current_instruction = ADDI;
+                            reg_to_loc = 1;      // Use Rm field (not used)
+                            alu_src = 1;         // Use immediate
+                            mem_to_reg = 0;      // Use ALU result
+                            reg_write = 1;       // Write to register file
+                            flags_should_set = 0; // Don't update flags
+                            mem_write = 0;       // Don't write to memory
+                            lsr_in_use = 0;      // Don't use LSR
+                            branch_taken = 0;    // Don't branch
+                            imm_size = 1;        // Use 12-bit immediate
+                            alu_op = 3'b010;     // Add operation
+							delayed_branch = 0; 
+                            
+                            // Don't care
                             uncond_branch = 0;
                         end
                         default: begin
-                            case (rf_instruction[31:21])
-                                OPCODE_ADDS: begin
+                            case(rf_instruction[31:21])
+                                11'b10101011000 : begin
+                                    // ADDS - Add and Set Flags
+                                    // Format: ADDS Rd, Rn, Rm
+                                    // Operation: Rd = Rn + Rm, update flags
                                     current_instruction = ADDS;
-                                    reg_to_loc = 1;
-                                    alu_src = 0;
-                                    mem_to_reg = 0;
-                                    flags_should_set = 1;
-                                    reg_write = 1;
-                                    lsr_in_use = 0;
-                                    mem_write = 0;
-                                    branch_taken = 0;
-                                    alu_op = 3'b010;
-                                    delayed_branch = 0;
+                                    reg_to_loc = 1;       // Use Rm as second operand
+                                    alu_src = 0;          // Use register value
+                                    mem_to_reg = 0;       // Use ALU result
+                                    flags_should_set = 1; // Update flags
+                                    reg_write = 1;        // Write to register file
+                                    lsr_in_use = 0;       // Don't use LSR
+                                    mem_write = 0;        // Don't write to memory
+                                    branch_taken = 0;     // Don't branch
+                                    alu_op = 3'b010;      // Add operation
+									delayed_branch = 0; 
+                                    
+                                    // Don't cares
                                     imm_size = 0;
                                     uncond_branch = 0;
                                 end
-                                OPCODE_AND: begin
+                                11'b10001010000 : begin
+                                    // AND - Bitwise AND
+                                    // Format: AND Rd, Rn, Rm
+                                    // Operation: Rd = Rn & Rm
                                     current_instruction = AND;
-                                    reg_to_loc = 1;
-                                    alu_src = 0;
-                                    flags_should_set = 0;
-                                    lsr_in_use = 0;
-                                    mem_to_reg = 0;
-                                    reg_write = 1;
-                                    mem_write = 0;
-                                    branch_taken = 0;
-                                    alu_op = 3'b100;
-                                    delayed_branch = 0;
+                                    reg_to_loc = 1;       // Use Rm as second operand
+                                    alu_src = 0;          // Use register value
+                                    flags_should_set = 0; // Don't update flags
+                                    lsr_in_use = 0;       // Don't use LSR
+                                    mem_to_reg = 0;       // Use ALU result
+                                    reg_write = 1;        // Write to register file
+                                    mem_write = 0;        // Don't write to memory
+                                    branch_taken = 0;     // Don't branch
+                                    alu_op = 3'b100;      // AND operation
+									delayed_branch = 0; 
+                                    
+                                    // Don't cares
                                     imm_size = 0;
                                     uncond_branch = 0;
                                 end
-                                OPCODE_EOR: begin
+                                11'b11001010000 : begin
+                                    // EOR - Exclusive OR
+                                    // Format: EOR Rd, Rn, Rm
+                                    // Operation: Rd = Rn ^ Rm
                                     current_instruction = EOR;
-                                    reg_to_loc = 1;
-                                    alu_src = 0;
-                                    lsr_in_use = 0;
-                                    flags_should_set = 0;
-                                    mem_to_reg = 0;
-                                    reg_write = 1;
-                                    mem_write = 0;
-                                    branch_taken = 0;
-                                    alu_op = 3'b110;
-                                    delayed_branch = 0;
+                                    reg_to_loc = 1;       // Use Rm as second operand
+                                    alu_src = 0;          // Use register value
+                                    lsr_in_use = 0;       // Don't use LSR
+                                    flags_should_set = 0; // Don't update flags
+                                    mem_to_reg = 0;       // Use ALU result
+                                    reg_write = 1;        // Write to register file
+                                    mem_write = 0;        // Don't write to memory
+                                    branch_taken = 0;     // Don't branch
+                                    alu_op = 3'b110;      // XOR operation
+									delayed_branch = 0; 
+                                    
+                                    // Don't cares
                                     imm_size = 0;
                                     uncond_branch = 0;
                                 end
-                                OPCODE_LDUR: begin
+                                11'b11111000010 : begin
+                                    // LDUR - Load Register
+                                    // Format: LDUR Rt, [Rn, imm9]
+                                    // Operation: Rt = Mem[Rn + SignExtend(imm9)]
                                     current_instruction = LDUR;
-                                    alu_src = 1;
-                                    mem_to_reg = 1;
-                                    lsr_in_use = 0;
-                                    reg_write = 1;
-                                    flags_should_set = 0;
-                                    mem_write = 0;
-                                    branch_taken = 0;
-                                    delayed_branch = 0;
-                                    imm_size = 0;
-                                    alu_op = 3'b010;
+                                    alu_src = 1;          // Use immediate
+                                    mem_to_reg = 1;       // Use memory data
+                                    lsr_in_use = 0;       // Don't use LSR
+                                    reg_write = 1;        // Write to register file
+                                    flags_should_set = 0; // Don't update flags
+                                    mem_write = 0;        // Don't write to memory
+                                    branch_taken = 0;     // Don't branch
+									delayed_branch = 0; 
+                                    imm_size = 0;         // Use 9-bit immediate
+                                    alu_op = 3'b010;      // Add operation (for address calculation)
+                                    
+                                    // Don't cares
                                     reg_to_loc = 0;
                                     uncond_branch = 0;
                                 end
-                                OPCODE_LSR: begin
+                                11'b11010011010 : begin
+                                    // LSR - Logical Shift Right
+                                    // Format: LSR Rd, Rn, shamt
+                                    // Operation: Rd = Rn >> shamt
                                     current_instruction = LSR;
-                                    reg_to_loc = 1;
-                                    alu_src = 1;
-                                    mem_to_reg = 0;
-                                    reg_write = 1;
-                                    flags_should_set = 0;
-                                    mem_write = 0;
-                                    branch_taken = 0;
-                                    delayed_branch = 0;
-                                    imm_size = 1;
-                                    lsr_in_use = 1;
+                                    reg_to_loc = 1;       // Use Rm field (not used)
+                                    alu_src = 1;          // Not used for LSR
+                                    mem_to_reg = 0;       // Use LSR result
+                                    reg_write = 1;        // Write to register file
+                                    flags_should_set = 0; // Don't update flags
+                                    mem_write = 0;        // Don't write to memory
+                                    branch_taken = 0;     // Don't branch
+									delayed_branch = 0; 
+                                    imm_size = 1;         // Not used for LSR
+                                    lsr_in_use = 1;       // Use LSR unit
+                                    
+                                    // Don't cares
                                     alu_op = 3'b000;
                                     uncond_branch = 0;
                                 end
-                                OPCODE_STUR: begin
+                                11'b11111000000 : begin
+                                    // STUR - Store Register
+                                    // Format: STUR Rt, [Rn, imm9]
+                                    // Operation: Mem[Rn + SignExtend(imm9)] = Rt
                                     current_instruction = STUR;
-                                    reg_to_loc = 0;
-                                    alu_src = 1;
-                                    flags_should_set = 0;
-                                    lsr_in_use = 0;
-                                    reg_write = 0;
-                                    mem_write = 1;
-                                    branch_taken = 0;
-                                    uncond_branch = 1;
-                                    delayed_branch = 0;
-                                    imm_size = 0;
-                                    alu_op = 3'b010;
+                                    reg_to_loc = 0;       // Use Rt as data to store
+                                    alu_src = 1;          // Use immediate
+                                    flags_should_set = 0; // Don't update flags
+                                    lsr_in_use = 0;       // Don't use LSR
+                                    reg_write = 0;        // Don't write to register file
+                                    mem_write = 1;        // Write to memory
+                                    branch_taken = 0;     // Don't branch
+                                    uncond_branch = 1;    // Used for address calculation
+									delayed_branch = 0; 
+                                    imm_size = 0;         // Use 9-bit immediate
+                                    alu_op = 3'b010;      // Add operation (for address calculation)
+                                    
+                                    // Don't care
                                     mem_to_reg = 0;
                                 end
-                                OPCODE_SUBS: begin
+                                11'b11101011000 : begin
+                                    // SUBS - Subtract and Set Flags
+                                    // Format: SUBS Rd, Rn, Rm
+                                    // Operation: Rd = Rn - Rm, update flags
                                     current_instruction = SUBS;
-                                    reg_to_loc = 1;
-                                    alu_src = 0;
-                                    flags_should_set = 1;
-                                    lsr_in_use = 0;
-                                    mem_to_reg = 0;
-                                    reg_write = 1;
-                                    mem_write = 0;
-                                    branch_taken = 0;
-                                    delayed_branch = 0;
-                                    alu_op = 3'b011;
+                                    reg_to_loc = 1;       // Use Rm as second operand
+                                    alu_src = 0;          // Use register value
+                                    flags_should_set = 1; // Update flags
+                                    lsr_in_use = 0;       // Don't use LSR
+                                    mem_to_reg = 0;       // Use ALU result
+                                    reg_write = 1;        // Write to register file
+                                    mem_write = 0;        // Don't write to memory
+                                    branch_taken = 0;     // Don't branch
+									delayed_branch = 0; 
+                                    alu_op = 3'b011;      // Subtract operation
+                                    
+                                    // Don't cares
                                     imm_size = 0;
                                     uncond_branch = 0;
                                 end
                                 default: begin
-                                    current_instruction = ERROR;
+                                    // Error - Unknown instruction
+                                    current_instruction = ERROR;        
+                                    
+                                    // Set all control signals to safe values
                                     reg_to_loc = 0;
                                     alu_src = 0;
                                     flags_should_set = 0;
@@ -938,19 +934,19 @@ always_comb begin
                                     reg_write = 0;
                                     mem_write = 0;
                                     branch_taken = 0;
-                                    delayed_branch = 0;
+									delayed_branch = 0; 
                                     uncond_branch = 0;
                                     alu_op = 3'b000;
                                     imm_size = 0;
                                 end
                             endcase
                         end
-                    endcase
-                end
-            endcase
-        end
-    endcase
-end
+                        endcase
+                    end
+                endcase
+            end
+        endcase
+    end
 
 endmodule
 
