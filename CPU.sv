@@ -45,6 +45,7 @@ module cpu(clock, reset);
     
     // Current instruction being processed
     logic [31:0] instruction;  // Current instruction from instruction memory
+    logic [31:0] instruction_temp; //instruction fetched before flushing logic
 	logic [31:0] rf_instruction; //Current instruction being decoded
 
     // Instruction type enumeration for better readability
@@ -292,7 +293,9 @@ localparam [10:0] OPCODE_STUR = 11'b11111000000;
 localparam [10:0] OPCODE_SUBS = 11'b11101011000;
 
 // Special opcodes
-localparam [26:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
+localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
+
+
 
     //====================================================================================
     // INSTRUCTION FETCH STAGE
@@ -309,20 +312,20 @@ localparam [26:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
 	
 	//pipeline for b
 	register rf_addr_26_reg (.clk(clock), .in(branch_addr_extended), .reset(reset), .enable(pipeline_enable), .out(ex_branch_addr_extended));
-    register #(.WIDTH(1)) rf_uncond_branch_reg (.clk(clock), .in(uncond_branch), .reset(reset), .enable(pipeline_enable), .out(ex_uncond_branch));
-    register #(.WIDTH(1)) rf_branch_taken_reg (.clk(clock), .in(branch_taken), .reset(reset), .enable(pipeline_enable), .out(ex_branch_taken));
+    register #(.WIDTH(1)) rf_uncond_branch_reg (.clk(clock), .in(uncond_branch), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_uncond_branch));
+    register #(.WIDTH(1)) rf_branch_taken_reg (.clk(clock), .in(branch_taken), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_branch_taken));
 	register rf_pc_reg (.clk(clock), .in(program_counter), .reset(reset), .enable(pipeline_enable), .out(ex_program_counter));
-	register #(.WIDTH(1)) rf_cbz_should_branch_reg (.clk(clock), .in(cbz_should_branch), .reset(reset), .enable(pipeline_enable), .out(ex_cbz_should_branch));
 
 
 	//Pipeline for cbz and conditional branches
 	register rf_cond_addr_19_reg (.clk(clock), .in(cond_addr_extended), .reset(reset), .enable(pipeline_enable), .out(ex_cond_addr_extended));
 	register ex_cond_addr_19_reg (.clk(clock), .in(ex_cond_addr_extended), .reset(reset), .enable(pipeline_enable), .out(mem_cond_addr_extended));
-    register #(.WIDTH(1)) rf_cbz_branch_taken_reg (.clk(clock), .in(cbz_branch_taken), .reset(reset), .enable(pipeline_enable), .out(ex_cbz_branch_taken));
+    register #(.WIDTH(1)) rf_cbz_branch_taken_reg (.clk(clock), .in(cbz_branch_taken), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_cbz_branch_taken));
+	register #(.WIDTH(1)) rf_cbz_should_branch_reg (.clk(clock), .in(cbz_should_branch), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_cbz_should_branch));
 
     //Pipeline for all branches
 	register branch_addr_final_reg (.clk(clock), .in(next_count_branch), .reset(reset), .enable(pipeline_enable), .out(branch_addr_final));
-	register #(.WIDTH(1)) branch_taken_final_reg (.clk(clock), .in(ex_branch_taken_final), .reset(reset), .enable(pipeline_enable), .out(branch_taken_final));
+	register #(.WIDTH(1)) branch_taken_final_reg (.clk(clock), .in(ex_branch_taken_final), .reset(reset_flush_ex), .enable(pipeline_enable), .out(branch_taken_final));
 	
 	
 
@@ -342,7 +345,11 @@ localparam [26:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     adder branch_adder (.A(shifted_addr), .B(ex_program_counter), .sum(next_count_branch), .carryOut(), .overflow());
     adder count_adder  (.A(program_counter), .B(64'h4), .sum(next_count), .carryOut(), .overflow());
 	
-	or(ex_branch_taken_final, branch_taken, cbz_branch_taken);
+	or #delay (ex_branch_taken_final, branch_taken, cbz_branch_taken);
+	
+	//Flush logic
+	or #delay (reset_flush_ex, reset, ex_cbz_branch_taken);
+	or #delay (reset_flush_rf, reset, reset_flush_ex, ex_branch_taken);
 
     // Select between PC+4 and branch target based on branch_taken signal
     generate
@@ -350,22 +357,33 @@ localparam [26:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
             mux2_1 branch_sel_mux (.out(next_addr[i]), .i0(next_count[i]), .i1(branch_addr_final[i]), .sel(branch_taken_final));
         end
     endgenerate
+
+        // Select between normal instruction and NO_OP for flushing
+    generate
+        for(i = 0; i < 64; i++) begin : each_noop_mux_bit
+            mux2_1 noop_mux (.out(instruction[i]), .i0(instruction_temp[i]), .i1(OPCODE_NOOP[i]), .sel(reset_flush_rf));
+        end
+    endgenerate
+	
 	
 	//if this is true, the register is 0 and cbz should branch.
-	zero_checker cbz_zero_checker (.in(rf_a_input), .out(cbz_should_branch));
+	zero_checker cbz_zero_checker (.in(rf_b_input), .out(cbz_should_branch));
 
 	//if we're at the right stage for CBZ to branch and the register it checked is 0, branch.
 	//NOTE: This should be a higher priority branch than other branches because those instructions will be squashed if we take this.
 	and #delay (cbz_branch_taken, delayed_branch, cbz_should_branch);
 	
     // Branch condition logic for B.LT instruction
-    xor #delay (blt_should_branch, negative_flag, overflow_flag);  // B.LT branches when N≠V
+    // I likely will need to come back to this, it's a little jank
+    xor #delay (blt_should_branch, temp_negative_flag, temp_overflow_flag);  // B.LT branches when N≠V
 
     // Program counter register
     register pc_register (.clk(clock), .in(next_addr), .reset(reset), .enable(1'b1), .out(program_counter));
 
     // Instruction memory - fetches the instruction at the current PC
-    instructmem instruction_memory (.address(program_counter), .instruction(instruction), .clk(clock));
+    instructmem instruction_memory (.address(program_counter), .instruction(instruction_temp), .clk(clock));
+	
+	
 
     //====================================================================================
     // REGISTER FETCH STAGE
@@ -530,21 +548,21 @@ localparam [26:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     //-----------------------------------------------------------------------------------
 
     // EX stage control registers
-    register #(.WIDTH(1)) ex_reg_write_reg (.clk(clock), .in(reg_write), .reset(reset), .enable(pipeline_enable), .out(ex_reg_write));
-    register #(.WIDTH(1)) ex_mem_write_reg (.clk(clock), .in(mem_write), .reset(reset), .enable(pipeline_enable), .out(ex_mem_write));
-    register #(.WIDTH(1)) ex_mem_to_reg_reg (.clk(clock), .in(mem_to_reg), .reset(reset), .enable(pipeline_enable), .out(ex_mem_to_reg));
-    register #(.WIDTH(1)) ex_reg_to_loc_reg (.clk(clock), .in(reg_to_loc), .reset(reset), .enable(pipeline_enable), .out(ex_reg_to_loc));
-    register #(.WIDTH(1)) ex_flags_should_set_reg (.clk(clock), .in(flags_should_set), .reset(reset), .enable(pipeline_enable), .out(ex_flags_should_set));
-    register #(.WIDTH(1)) ex_lsr_in_use_reg (.clk(clock), .in(lsr_in_use), .reset(reset), .enable(pipeline_enable), .out(ex_lsr_in_use));
-	register #(.WIDTH(1)) ex_cbz_branch_reg (.clk(clock), .in(delayed_branch), .reset(reset), .enable(pipeline_enable), .out(ex_delayed_branch));
+    register #(.WIDTH(1)) ex_reg_write_reg (.clk(clock), .in(reg_write), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_reg_write));
+    register #(.WIDTH(1)) ex_mem_write_reg (.clk(clock), .in(mem_write), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_mem_write));
+    register #(.WIDTH(1)) ex_mem_to_reg_reg (.clk(clock), .in(mem_to_reg), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_mem_to_reg));
+    register #(.WIDTH(1)) ex_reg_to_loc_reg (.clk(clock), .in(reg_to_loc), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_reg_to_loc));
+    register #(.WIDTH(1)) ex_flags_should_set_reg (.clk(clock), .in(flags_should_set), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_flags_should_set));
+    register #(.WIDTH(1)) ex_lsr_in_use_reg (.clk(clock), .in(lsr_in_use), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_lsr_in_use));
+	register #(.WIDTH(1)) ex_cbz_branch_reg (.clk(clock), .in(delayed_branch), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_delayed_branch));
     register #(.WIDTH(3)) ex_alu_op_reg (.clk(clock), .in(alu_op), .reset(reset), .enable(pipeline_enable), .out(ex_alu_op));
 
     // MEM stage control registers
-	register #(.WIDTH(1)) mem_cbz_branch_reg (.clk(clock), .in(ex_delayed_branch), .reset(reset), .enable(pipeline_enable), .out(mem_delayed_branch));
-    register #(.WIDTH(1)) mem_reg_write_reg (.clk(clock), .in(ex_reg_write), .reset(reset), .enable(pipeline_enable), .out(mem_reg_write));
-    register #(.WIDTH(1)) mem_mem_write_reg (.clk(clock), .in(ex_mem_write), .reset(reset), .enable(pipeline_enable), .out(mem_mem_write));
-    register #(.WIDTH(1)) mem_mem_to_reg_reg (.clk(clock), .in(ex_mem_to_reg), .reset(reset), .enable(pipeline_enable), .out(mem_mem_to_reg));
-    register #(.WIDTH(1)) mem_reg_to_loc_reg (.clk(clock), .in(ex_reg_to_loc), .reset(reset), .enable(pipeline_enable), .out(mem_reg_to_loc));
+	register #(.WIDTH(1)) mem_cbz_branch_reg (.clk(clock), .in(ex_delayed_branch), .reset(reset_flush_ex), .enable(pipeline_enable), .out(mem_delayed_branch));
+    register #(.WIDTH(1)) mem_reg_write_reg (.clk(clock), .in(ex_reg_write), .reset(reset_flush_ex), .enable(pipeline_enable), .out(mem_reg_write));
+    register #(.WIDTH(1)) mem_mem_write_reg (.clk(clock), .in(ex_mem_write), .reset(reset_flush_ex), .enable(pipeline_enable), .out(mem_mem_write));
+    register #(.WIDTH(1)) mem_mem_to_reg_reg (.clk(clock), .in(ex_mem_to_reg), .reset(reset_flush_ex), .enable(pipeline_enable), .out(mem_mem_to_reg));
+    register #(.WIDTH(1)) mem_reg_to_loc_reg (.clk(clock), .in(ex_reg_to_loc), .reset(reset_flush_ex), .enable(pipeline_enable), .out(mem_reg_to_loc));
 
     // WB stage control registers
     register #(.WIDTH(1)) wb_reg_write_reg (.clk(clock), .in(mem_reg_write), .reset(reset), .enable(pipeline_enable), .out(wb_reg_write));

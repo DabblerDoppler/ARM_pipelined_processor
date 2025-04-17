@@ -10,7 +10,7 @@ cModel Technology
 Z0 dF:/QuartusStuff/Projects/extra/extra2lol/ARM_pipelined_processor
 vadder
 Z1 DXx6 sv_std 3 std 0 22 AD7iAPLo6nTIKk<N0eo=D3
-Z2 !s110 1744799431
+Z2 !s110 1744863001
 !i10b 1
 !s100 BnX@dX5:FITBQ^V1kS12a3
 IDV[D=]EYXLfY?A@:]?klI2
@@ -26,7 +26,7 @@ Z6 OV;L;10.5b;63
 r1
 !s85 0
 31
-Z7 !s108 1744799431.000000
+Z7 !s108 1744863001.000000
 !s107 ./adder.sv|
 !s90 -reportprogress|300|./adder.sv|
 !i113 1
@@ -125,15 +125,15 @@ R7
 R8
 vcpu
 R1
-Z9 !s110 1744799432
+Z9 !s110 1744863002
 !i10b 1
-!s100 X_CWVZY[>B7a8Gz;ChNdc1
-I1b]_=J2];Vo>1O4bjzo4^1
+!s100 _JlNZTofoTkeC2eUaF@iZ1
+IYO@dOELaNlNfNi]koTe?K1
 R3
 Z10 !s105 cpu_sv_unit
 S1
 R4
-Z11 w1744799417
+Z11 w1744862708
 Z12 8./cpu.sv
 Z13 F./cpu.sv
 L0 31
@@ -141,7 +141,7 @@ R6
 r1
 !s85 0
 31
-Z14 !s108 1744799432.000000
+Z14 !s108 1744863002.000000
 Z15 !s107 ./cpu.sv|
 Z16 !s90 -reportprogress|300|./cpu.sv|
 !i113 1
@@ -150,8 +150,8 @@ vcpu_testbench
 R1
 R9
 !i10b 1
-!s100 ML@X3jM=oEb;l`1>]hSco3
-IgHYdWi[3hF>mjfg?_hRcb3
+!s100 3iCBY=RXU@1mSV28mb99Q0
+I0jlZPW7[?0IbOKS=P^Be_2
 R3
 R10
 S1
@@ -159,7 +159,7 @@ R4
 R11
 R12
 R13
-L0 962
+L0 983
 R6
 r1
 !s85 0
@@ -240,7 +240,7 @@ R21
 R8
 vdecoder_recursive
 R1
-R2
+R9
 !i10b 1
 !s100 _GaQ^]jQFI]ncdCg<K]cf3
 I;9T9Wam^3HCogl=j2_idF2
@@ -357,7 +357,7 @@ R8
 n@equality@checker_5
 vfull_adder
 R1
-R2
+R9
 !i10b 1
 !s100 Jc40IHN``b5d1]k<:78HY0
 IoG7^QTLgznQ=khAd_BjCi2
@@ -373,7 +373,7 @@ R6
 r1
 !s85 0
 31
-R7
+R14
 !s107 ./full_adder.sv|
 !s90 -reportprogress|300|./full_adder.sv|
 !i113 1
@@ -382,16 +382,16 @@ vinstructmem
 R1
 R9
 !i10b 1
-!s100 41LaX<RK`;Z7bCT[Ie]:13
-IP0]Y=f5djcZ5R_U2TUfdo1
+!s100 `eFO>]QSQ76nY=il64g@i0
+IO1h4zJPzXGhoi9^Z<[Q6o2
 R3
 Z27 !s105 instructmem_sv_unit
 S1
 R4
-Z28 w1744779555
+Z28 w1744858041
 Z29 8./instructmem.sv
 Z30 F./instructmem.sv
-L0 116
+L0 117
 R6
 r1
 !s85 0
@@ -405,8 +405,8 @@ vinstructmem_testbench
 R1
 R9
 !i10b 1
-!s100 ]:KJ_W>ElkleTE66KS3c33
-IS?<`EH?3Bia37KE00bg6d2
+!s100 ;[dF7W52Wg74g0ZSUngz]3
+In?T36RNOC>7EjWkEUd;oc2
 R3
 R27
 S1
@@ -414,7 +414,7 @@ R4
 R28
 R29
 R30
-L0 156
+L0 157
 R6
 r1
 !s85 0
@@ -742,7 +742,7 @@ R6
 r1
 !s85 0
 31
-R7
+R14
 !s107 ./zero_checker.sv|
 !s90 -reportprogress|300|./zero_checker.sv|
 !i113 1
