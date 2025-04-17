@@ -62,7 +62,7 @@ module cpu(clock, reset);
     // Main control signals
     logic reg_to_loc;          // 0: Use rd_addr as second register, 1: Use rm_addr
     logic alu_src;             // 0: Use register value for ALU B input, 1: Use immediate
-    logic mem_to_reg;          // 0: Pass ALU result to register, 1: Pass memory data
+    logic read_mem;          // 0: Pass ALU result to register, 1: Pass memory data
     logic imm_size;            // 0: Use 9-bit immediate, 1: Use 12-bit immediate
     logic reg_write;           // 1: Write to register file
     logic mem_write;           // 1: Write to data memory
@@ -193,11 +193,12 @@ module cpu(clock, reset);
     // Forwarding inputs
     logic [63:0] rf_a_input;           // Input A to RF stage (possibly forwarded)
     logic [63:0] rf_b_input;           // Input B to RF stage (possibly forwarded)
+
     
     // Equality check results
-    logic eq_rn_rf, eq_rn_ex, eq_rn_mem;    // Equality check results for rn_addr
-    logic eq_rd_rf, eq_rd_ex, eq_rd_mem;    // Equality check results for rd_addr
-    logic eq_rm_rf, eq_rm_ex, eq_rm_mem;    // Equality check results for rm_addr
+    logic eq_rn_ex, eq_rn_mem, eq_rn_wb;    // Equality check results for rn_addr
+    logic eq_rd_ex, eq_rd_mem, eq_rd_wb;    // Equality check results for rd_addr
+    logic eq_rm_ex, eq_rm_mem, eq_rm_wb;    // Equality check results for rm_addr
     
     // Register writability signals
     logic rn_cant_write, rn_can_write;      // Whether rn_addr can be written to
@@ -230,7 +231,9 @@ module cpu(clock, reset);
     logic [63:0] forwarding_choice_a;       // Selected data for A input
     logic [63:0] forwarding_choice_b;       // Selected data for B input
     logic [63:0] mem_wb_forwarding_choice_a; // Selected data from MEM/WB for A
-    logic [63:0] mem_wb_forwarding_choice_b; // Selected data from MEM/WB for B
+    logic [63:0] mem_wb_forwarding_choice_b; // Selected data from MEM/WB for B    
+    logic [63:0] ldur_forward_data;     // Selected data from MEM/WB for stur/ldur
+    logic [63:0] ldur_b_forward_result; // selected data from stur/ldur muxing
     
     // Final forwarding control signals
     logic mem_wb_forward_a, mem_wb_forward_b; // Control signals for MEM/WB forwarding
@@ -244,7 +247,7 @@ module cpu(clock, reset);
     // EX stage control signals
     logic ex_reg_write;                // Register write in EX stage
     logic ex_mem_write;                // Memory write in EX stage
-    logic ex_mem_to_reg;               // Memory to register in EX stage
+    logic ex_read_mem;               // Memory to register in EX stage
     logic ex_reg_to_loc;               // Register to location in EX stage
     logic ex_flags_should_set;         // Flag update in EX stage
     logic ex_lsr_in_use;               // LSR use in EX stage
@@ -253,11 +256,12 @@ module cpu(clock, reset);
     // MEM stage control signals
     logic mem_reg_write;               // Register write in MEM stage
     logic mem_mem_write;               // Memory write in MEM stage
-    logic mem_mem_to_reg;              // Memory to register in MEM stage
+    logic mem_read_mem;              // Memory to register in MEM stage
     logic mem_reg_to_loc;              // Register to location in MEM stage
     
     // WB stage control signals
     logic wb_reg_write;                // Register write in WB stage
+    logic wb_read_mem;
 
     //====================================================================================
     // FLUSHING LOGIC
@@ -375,7 +379,15 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
 	
     // Branch condition logic for B.LT instruction
     // I likely will need to come back to this, it's a little jank
-    xor #delay (blt_should_branch, temp_negative_flag, temp_overflow_flag);  // B.LT branches when N≠V
+
+    //this is essentially a quick and dirty way to forward flags
+    not (not_flags_set, ex_flags_should_set);
+    and #delay (valid_negative_flag, negative_flag, not_flags_set);
+    or #delay (blt_negative_flag, temp_negative_flag, valid_negative_flag);   
+    and #delay (valid_overflow_flag, overflow_flag, not_flags_set);
+    or #delay (blt_overflow_flag, temp_overflow_flag, valid_overflow_flag); 
+
+    xor #delay (blt_should_branch, blt_negative_flag, blt_overflow_flag);  // B.LT branches when N≠V
 
     // Program counter register
     register pc_register (.clk(clock), .in(next_addr), .reset(reset), .enable(1'b1), .out(program_counter));
@@ -473,17 +485,17 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     datamem data_memory (
         .address(ex_out),              // Memory address from EX stage
         .write_enable(mem_mem_write),  // Write enable signal
-        .read_enable(mem_mem_to_reg),  // Read enable signal
+        .read_enable(mem_read_mem),  // Read enable signal
         .write_data(ex_b_out),         // Data to write for store instructions
         .clk(clock),                   // System clock
         .xfer_size(4'b1000),           // Transfer size in bytes (always 8 for this implementation)
         .read_data(data_out)           // Data read from memory
     );
 
-    // Select between memory data and ALU result based on mem_to_reg
+    // Select between memory data and ALU result based on read_mem
     generate
         for(i = 0; i < 64; i++) begin : each_mem_or_alu_bit
-            mux2_1 mem_or_alu_mux (.out(write_to_register[i]), .i0(ex_out[i]), .i1(data_out[i]), .sel(mem_mem_to_reg));
+            mux2_1 mem_or_alu_mux (.out(write_to_register[i]), .i0(ex_out[i]), .i1(data_out[i]), .sel(mem_read_mem));
         end
     endgenerate
 
@@ -550,7 +562,7 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     // EX stage control registers
     register #(.WIDTH(1)) ex_reg_write_reg (.clk(clock), .in(reg_write), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_reg_write));
     register #(.WIDTH(1)) ex_mem_write_reg (.clk(clock), .in(mem_write), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_mem_write));
-    register #(.WIDTH(1)) ex_mem_to_reg_reg (.clk(clock), .in(mem_to_reg), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_mem_to_reg));
+    register #(.WIDTH(1)) ex_read_mem_reg (.clk(clock), .in(read_mem), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_read_mem));
     register #(.WIDTH(1)) ex_reg_to_loc_reg (.clk(clock), .in(reg_to_loc), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_reg_to_loc));
     register #(.WIDTH(1)) ex_flags_should_set_reg (.clk(clock), .in(flags_should_set), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_flags_should_set));
     register #(.WIDTH(1)) ex_lsr_in_use_reg (.clk(clock), .in(lsr_in_use), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_lsr_in_use));
@@ -561,11 +573,12 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
 	register #(.WIDTH(1)) mem_cbz_branch_reg (.clk(clock), .in(ex_delayed_branch), .reset(reset_flush_ex), .enable(pipeline_enable), .out(mem_delayed_branch));
     register #(.WIDTH(1)) mem_reg_write_reg (.clk(clock), .in(ex_reg_write), .reset(reset_flush_ex), .enable(pipeline_enable), .out(mem_reg_write));
     register #(.WIDTH(1)) mem_mem_write_reg (.clk(clock), .in(ex_mem_write), .reset(reset_flush_ex), .enable(pipeline_enable), .out(mem_mem_write));
-    register #(.WIDTH(1)) mem_mem_to_reg_reg (.clk(clock), .in(ex_mem_to_reg), .reset(reset_flush_ex), .enable(pipeline_enable), .out(mem_mem_to_reg));
+    register #(.WIDTH(1)) mem_read_mem_reg (.clk(clock), .in(ex_read_mem), .reset(reset_flush_ex), .enable(pipeline_enable), .out(mem_read_mem));
     register #(.WIDTH(1)) mem_reg_to_loc_reg (.clk(clock), .in(ex_reg_to_loc), .reset(reset_flush_ex), .enable(pipeline_enable), .out(mem_reg_to_loc));
 
     // WB stage control registers
     register #(.WIDTH(1)) wb_reg_write_reg (.clk(clock), .in(mem_reg_write), .reset(reset), .enable(pipeline_enable), .out(wb_reg_write));
+    register #(.WIDTH(1)) wb_read_mem_reg (.clk(clock), .in(mem_read_mem), .reset(reset_flush_ex), .enable(pipeline_enable), .out(wb_read_mem));
 
     //====================================================================================
     // FORWARDING UNIT
@@ -578,19 +591,19 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     //-----------------------------------------------------------------------------------
     
     // Check if rf_rn_addr (which goes into Aa) of instruction (in the RF stage) is equal to rd_addr in each stage
-    equality_checker eq_rn_rf_checker (.in0(rf_rn_addr), .in1(ex_rd_addr), .out(eq_rn_rf));
-    equality_checker eq_rn_ex_checker (.in0(rf_rn_addr), .in1(mem_rd_addr), .out(eq_rn_ex));
-    equality_checker eq_rn_mem_checker (.in0(rf_rn_addr), .in1(wb_rd_addr), .out(eq_rn_mem));
+    equality_checker eq_rn_rf_checker (.in0(rf_rn_addr), .in1(ex_rd_addr), .out(eq_rn_ex));
+    equality_checker eq_rn_ex_checker (.in0(rf_rn_addr), .in1(mem_rd_addr), .out(eq_rn_mem));
+    equality_checker eq_rn_mem_checker (.in0(rf_rn_addr), .in1(wb_rd_addr), .out(eq_rn_wb));
 
     // Check if rd_addr, which goes into Ab when reg_to_loc is false, is equal to rd_addr in upcoming stages
-    equality_checker eq_rd_rf_checker (.in0(rf_rd_addr), .in1(ex_rd_addr), .out(eq_rd_rf));
-    equality_checker eq_rd_ex_checker (.in0(rf_rd_addr), .in1(mem_rd_addr), .out(eq_rd_ex));
-    equality_checker eq_rd_mem_checker (.in0(rf_rd_addr), .in1(wb_rd_addr), .out(eq_rd_mem));
+    equality_checker eq_rd_rf_checker (.in0(rf_rd_addr), .in1(ex_rd_addr), .out(eq_rd_ex));
+    equality_checker eq_rd_ex_checker (.in0(rf_rd_addr), .in1(mem_rd_addr), .out(eq_rd_mem));
+    equality_checker eq_rd_mem_checker (.in0(rf_rd_addr), .in1(wb_rd_addr), .out(eq_rd_wb));
 
     // Check if rm_addr, which goes into Ab when reg_to_loc is true, is equal to rd_addr in each stage
-    equality_checker eq_rm_rf_checker (.in0(rf_rm_addr), .in1(ex_rd_addr), .out(eq_rm_rf));
-    equality_checker eq_rm_ex_checker (.in0(rf_rm_addr), .in1(mem_rd_addr), .out(eq_rm_ex));
-    equality_checker eq_rm_mem_checker (.in0(rf_rm_addr), .in1(wb_rd_addr), .out(eq_rm_mem));
+    equality_checker eq_rm_rf_checker (.in0(rf_rm_addr), .in1(ex_rd_addr), .out(eq_rm_ex));
+    equality_checker eq_rm_ex_checker (.in0(rf_rm_addr), .in1(mem_rd_addr), .out(eq_rm_mem));
+    equality_checker eq_rm_mem_checker (.in0(rf_rm_addr), .in1(wb_rd_addr), .out(eq_rm_wb));
 
     // Register x31 is used as a special case (cannot be written to)
     assign do_not_write = 31;
@@ -603,7 +616,7 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     // and rf_rn_addr is not x31, use the output of the ALU instead of rf_rn_addr
     equality_checker is_rn_x31 (.in0(rf_rn_addr), .in1(do_not_write), .out(rn_cant_write));
     not #delay (rn_can_write, rn_cant_write);
-    and #delay (forward_rd_exec_to_a, rn_can_write, eq_rn_rf, ex_reg_write);
+    and #delay (forward_rd_exec_to_a, rn_can_write, eq_rn_ex, ex_reg_write);
 
     // Forwarding for B input
     equality_checker is_rd_x31 (.in0(rf_rd_addr), .in1(do_not_write), .out(rd_cant_write));
@@ -623,7 +636,9 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     // - rd_addr is not x31
     // - reg_to_loc is 0 (using rd_addr as second operand)
     // - alu_src is 0 (using register value, not immediate)
-    and #delay (forward_rd_exec_to_rd, eq_rd_rf, ex_reg_write, rd_can_write, not_reg_to_loc, not_alu_src);
+    and #delay (forward_rd_exec_to_rd, eq_rd_ex, ex_reg_write, rd_can_write, not_reg_to_loc, not_alu_src_or_stur);
+
+    or #delay (not_alu_src_or_stur, not_alu_src, mem_write);
     
     // Forward from EX stage to rm_addr when:
     // - rm_addr matches destination in EX stage
@@ -631,7 +646,7 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     // - rm_addr is not x31
     // - reg_to_loc is 1 (using rm_addr as second operand)
     // - alu_src is 0 (using register value, not immediate)
-    and #delay (forward_rd_exec_to_rm, eq_rm_rf, ex_reg_write, rm_can_write, reg_to_loc, not_alu_src);
+    and #delay (forward_rd_exec_to_rm, eq_rm_ex, ex_reg_write, rm_can_write, reg_to_loc, not_alu_src);
     
     // Combine forwarding signals for B input
     or #delay (forward_rd_exec_to_b, forward_rd_exec_to_rm, forward_rd_exec_to_rd);
@@ -644,7 +659,7 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     // - rn_addr matches destination in MEM stage
     // - MEM stage will write to register file
     // - rn_addr is not x31
-    and #delay (forward_rd_mem_to_a, rn_can_write, eq_rn_ex, mem_reg_write);
+    and #delay (forward_rd_mem_to_a, rn_can_write, eq_rn_mem, mem_reg_write);
 
     // Forward from MEM stage to B input
     // Forward from MEM stage to rd_addr when:
@@ -653,7 +668,7 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     // - rd_addr is not x31
     // - reg_to_loc is 0 (using rd_addr as second operand)
     // - alu_src is 0 (using register value, not immediate)
-    and #delay (forward_rd_mem_to_rd, eq_rd_ex, mem_reg_write, rd_can_write, not_alu_src, not_reg_to_loc);
+    and #delay (forward_rd_mem_to_rd, eq_rd_mem, mem_reg_write, rd_can_write, not_alu_src, not_reg_to_loc);
     
     // Forward from MEM stage to rm_addr when:
     // - rm_addr matches destination in MEM stage
@@ -661,7 +676,7 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     // - rm_addr is not x31
     // - reg_to_loc is 1 (using rm_addr as second operand)
     // - alu_src is 0 (using register value, not immediate)
-    and #delay (forward_rd_mem_to_rm, eq_rm_ex, mem_reg_write, rm_can_write, not_alu_src, reg_to_loc);
+    and #delay (forward_rd_mem_to_rm, eq_rm_mem, mem_reg_write, rm_can_write, not_alu_src, reg_to_loc);
     
     // Combine forwarding signals for B input from MEM stage
     or #delay (forward_rd_mem_to_b, forward_rd_mem_to_rd, forward_rd_mem_to_rm);
@@ -674,7 +689,7 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     // - rn_addr matches destination in WB stage
     // - WB stage will write to register file
     // - rn_addr is not x31
-    and #delay (forward_rd_wb_to_a, rn_can_write, eq_rn_mem, wb_reg_write);
+    and #delay (forward_rd_wb_to_a, rn_can_write, eq_rn_wb, wb_reg_write);
 
     // Forward from WB stage to B input
     // Forward from WB stage to rd_addr when:
@@ -683,7 +698,7 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     // - rd_addr is not x31
     // - reg_to_loc is 0 (using rd_addr as second operand)
     // - alu_src is 0 (using register value, not immediate)
-    and #delay (forward_rd_wb_to_rd, eq_rd_mem, wb_reg_write, rd_can_write, not_alu_src, not_reg_to_loc);
+    and #delay (forward_rd_wb_to_rd, eq_rd_wb, wb_reg_write, rd_can_write, not_alu_src, not_reg_to_loc);
     
     // Forward from WB stage to rm_addr when:
     // - rm_addr matches destination in WB stage
@@ -691,7 +706,7 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     // - rm_addr is not x31
     // - reg_to_loc is 1 (using rm_addr as second operand)
     // - alu_src is 0 (using register value, not immediate)
-    and #delay (forward_rd_wb_to_rm, eq_rm_mem, wb_reg_write, rm_can_write, not_alu_src, reg_to_loc);
+    and #delay (forward_rd_wb_to_rm, eq_rm_wb, wb_reg_write, rm_can_write, not_alu_src, reg_to_loc);
     
     // Combine forwarding signals for B input from WB stage
     or #delay (forward_rd_wb_to_b, forward_rd_wb_to_rd, forward_rd_wb_to_rm);
@@ -722,16 +737,59 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     endgenerate
 
     // Determine final forwarding control signals
-    mux2_1 a_forward_choice_mux_e (.out(forward_a), .i0(mem_wb_forward_a), .i1(forward_rd_exec_to_a), .sel(forward_rd_exec_to_a));
-    mux2_1 b_forward_choice_mux_e (.out(forward_b), .i0(mem_wb_forward_b), .i1(forward_rd_exec_to_b), .sel(forward_rd_exec_to_b));
+    or #delay(forward_a, mem_wb_forward_a, forward_rd_exec_to_a);
+    or #delay(forward_b, mem_wb_forward_b, forward_rd_exec_to_b);
 
     // Final forwarding muxes - select between register file output and forwarded data
     generate
         for(i = 0; i < 64; i++) begin : each_forward_mux
             mux2_1 a_forward_mux (.out(rf_a_input[i]), .i0(data_a[i]), .i1(forwarding_choice_a[i]), .sel(forward_a));
-            mux2_1 b_forward_mux (.out(rf_b_input[i]), .i0(data_b[i]), .i1(forwarding_choice_b[i]), .sel(forward_b));
+            mux2_1 b_forward_mux (.out(rf_b_input[i]), .i0(data_b[i]), .i1(ldur_b_forward_result[i]), .sel(forward_b));
         end
     endgenerate
+
+    //-----------------------------------------------------------------------------------
+    // LDUR → STUR Forwarding
+    //-----------------------------------------------------------------------------------
+
+    // Match STUR's store data register (rf_rn_addr) with the destination registers
+    // in MEM and WB stages, respectively
+    equality_checker eq_ldur_stur_mem (.in0(rf_rn_addr), .in1(mem_rd_addr), .out(ldur_stur_eq_mem));
+    equality_checker eq_ldur_stur_wb  (.in0(rf_rn_addr), .in1(wb_rd_addr),  .out(ldur_stur_eq_wb));
+
+    // Forward loaded value from MEM stage to STUR store input (B)
+    and #delay (forward_ldur_mem_to_store_b, ldur_stur_eq_mem, mem_write, mem_read_mem, mem_reg_write);
+
+    // Forward loaded value from WB stage to STUR store input (B)
+    and #delay (forward_ldur_wb_to_store_b, ldur_stur_eq_wb, mem_write, wb_read_mem, wb_reg_write);
+
+    // Combine LDUR → STUR forwarding for B input
+    or #delay (forward_ldur_to_store_b, forward_ldur_mem_to_store_b, forward_ldur_wb_to_store_b);
+
+    // First: mux between MEM and WB loaded data
+    generate
+        for (i = 0; i < 64; i++) begin : ldur_data_select
+            mux2_1 ldur_value_mux (
+                .out(ldur_forward_data[i]),
+                .i0(mem_out[i]),
+                .i1(write_to_register[i]),
+                .sel(forward_rd_mem_to_a) // if MEM match, use mem_out, else use WB value
+            );
+        end
+    endgenerate
+
+    // Choose value for STUR's store-data path: forward LDUR result or use RF B
+    generate
+        for (i = 0; i < 64; i++) begin : ldur_store_forward_mux
+            mux2_1 store_b_ldur_mux (
+                .out(ldur_b_forward_result[i]),
+                .i0(forwarding_choice_b[i]),      // normal B input (already chosen from EX/MEM/WB ALU paths)
+                .i1(ldur_forward_data[i]),         // use the previously mux'd LDUR value
+                .sel(forward_ldur_to_store_b)     // only override for LDUR→STUR case
+            );
+        end
+    endgenerate
+
 
     //====================================================================================
     // FLAG REGISTERS
@@ -783,7 +841,7 @@ always_comb begin
             alu_src = 0;
             lsr_in_use = 0;
             alu_op = 3'b000;
-            mem_to_reg = 0;
+            read_mem = 0;
             imm_size = 0;
         end
         default: begin
@@ -800,7 +858,7 @@ always_comb begin
                     delayed_branch = 0;
                     flags_should_set = 0;
                     alu_op = 3'b000;
-                    mem_to_reg = 0;
+                    read_mem = 0;
                     imm_size = 0;
                 end
                 OPCODE_CBZ: begin
@@ -815,7 +873,7 @@ always_comb begin
                     uncond_branch = 0;
                     delayed_branch = 1;
                     alu_op = 3'b000;
-                    mem_to_reg = 0;
+                    read_mem = 0;
                     imm_size = 0;
                 end
                 default: begin
@@ -828,7 +886,7 @@ always_comb begin
 				end
                             reg_to_loc = 1;
                             alu_src = 1;
-                            mem_to_reg = 0;
+                            read_mem = 0;
                             reg_write = 1;
                             flags_should_set = 0;
                             mem_write = 0;
@@ -845,7 +903,7 @@ always_comb begin
                                     current_instruction = ADDS;
                                     reg_to_loc = 1;
                                     alu_src = 0;
-                                    mem_to_reg = 0;
+                                    read_mem = 0;
                                     flags_should_set = 1;
                                     reg_write = 1;
                                     lsr_in_use = 0;
@@ -862,7 +920,7 @@ always_comb begin
                                     alu_src = 0;
                                     flags_should_set = 0;
                                     lsr_in_use = 0;
-                                    mem_to_reg = 0;
+                                    read_mem = 0;
                                     reg_write = 1;
                                     mem_write = 0;
                                     branch_taken = 0;
@@ -877,7 +935,7 @@ always_comb begin
                                     alu_src = 0;
                                     lsr_in_use = 0;
                                     flags_should_set = 0;
-                                    mem_to_reg = 0;
+                                    read_mem = 0;
                                     reg_write = 1;
                                     mem_write = 0;
                                     branch_taken = 0;
@@ -889,7 +947,7 @@ always_comb begin
                                 OPCODE_LDUR: begin
                                     current_instruction = LDUR;
                                     alu_src = 1;
-                                    mem_to_reg = 1;
+                                    read_mem = 1;
                                     lsr_in_use = 0;
                                     reg_write = 1;
                                     flags_should_set = 0;
@@ -905,7 +963,7 @@ always_comb begin
                                     current_instruction = LSR;
                                     reg_to_loc = 1;
                                     alu_src = 1;
-                                    mem_to_reg = 0;
+                                    read_mem = 0;
                                     reg_write = 1;
                                     flags_should_set = 0;
                                     mem_write = 0;
@@ -929,7 +987,7 @@ always_comb begin
                                     delayed_branch = 0;
                                     imm_size = 0;
                                     alu_op = 3'b010;
-                                    mem_to_reg = 0;
+                                    read_mem = 0;
                                 end
                                 OPCODE_SUBS: begin
                                     current_instruction = SUBS;
@@ -937,7 +995,7 @@ always_comb begin
                                     alu_src = 0;
                                     flags_should_set = 1;
                                     lsr_in_use = 0;
-                                    mem_to_reg = 0;
+                                    read_mem = 0;
                                     reg_write = 1;
                                     mem_write = 0;
                                     branch_taken = 0;
@@ -952,7 +1010,7 @@ always_comb begin
                                     alu_src = 0;
                                     flags_should_set = 0;
                                     lsr_in_use = 0;
-                                    mem_to_reg = 0;
+                                    read_mem = 0;
                                     reg_write = 0;
                                     mem_write = 0;
                                     branch_taken = 0;
