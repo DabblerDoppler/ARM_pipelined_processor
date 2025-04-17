@@ -64,4 +64,3 @@ Basic simulation flow:
 ## Author Notes
 
 This project was completed for a computer architecture course under strict constraints disallowing any behavioral abstraction or premade IP blocks. Forwarding logic, branching, and memory behavior were developed and debugged entirely at the signal and gate level. I added some further features past the initial project instruction such as flushing logic.
-```
