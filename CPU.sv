@@ -1066,7 +1066,7 @@ module cpu_testbench();
         reset = 0; @(posedge clk); 
         
         // Run for many clock cycles to observe behavior
-        repeat(200) @(posedge clk);
+        repeat(1500) @(posedge clk);
         
         // End simulation
         $stop;
