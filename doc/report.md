@@ -29,7 +29,7 @@ A five-stage pipelined processor implementing an 11-instruction subset of the AR
 
 ## Architecture
 ### High-level block diagram
-![Block Diagram](./img/cpu_block_diagram.png)
+![Block Diagram](./img/cpu_block_diagram.PNG)
 ### Datapath and Control Flow
 
 The CPU follows a classic five-stage pipelined datapath. The stages are:
@@ -65,7 +65,7 @@ Pipeline registers are placed between each stage to hold the relevant control si
 - **EX/MEM:** Holds ALU output and destination register ID.
 - **MEM/WB:** Holds memory read data or ALU output and destination register ID.
   
-![Pipeline Diagram](./img/cpu_pipelining_diagram.png)
+![Pipeline Diagram](./img/cpu_pipelining_diagram.PNG)
 
 ## Source Modules
 
