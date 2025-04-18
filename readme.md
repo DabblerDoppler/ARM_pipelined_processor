@@ -1,6 +1,6 @@
 # Gate-Level 5-Stage Pipelined CPU (11-Instruction Subset)
 
-This project implements a 64-bit, 5-stage pipelined processor entirely in SystemVerilog using gate-level design. All components, from control logic to data hazard forwarding, are built from basic logic gates and multiplexers. No behavioral modeling or high-level synthesis tools were used.
+This project implements a 64-bit, 5-stage pipelined processor entirely in SystemVerilog using gate-level design. ALmost all components, from control logic to data hazard forwarding, are built from basic logic gates and multiplexers. The exceptions to this are instruction decode, instructmem.sv, and datamem.sv which use always_comb blocks.
 
 ## Instruction Set
 
