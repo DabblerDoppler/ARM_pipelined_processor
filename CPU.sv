@@ -35,22 +35,22 @@ module cpu(clock, reset);
     //====================================================================================
     // PRIMARY INPUTS AND PARAMETERS
     //====================================================================================
-    
+
     input logic clock;     // System clock
     input logic reset;     // Active high reset signal
 
     //====================================================================================
     // INSTRUCTION PROCESSING
     //====================================================================================
-    
+
     // Current instruction being processed
     logic [31:0] instruction;  // Current instruction from instruction memory
-    logic [31:0] instruction_temp; //instruction fetched before flushing logic
-	logic [31:0] rf_instruction; //Current instruction being decoded
+    logic [31:0] fetched_instruction; //instruction fetched before flushing logic
+    logic [31:0] rf_instruction; //Current instruction being decoded
 
     // Instruction type enumeration for better readability
-    typedef enum { 
-        RESET, B, BLT, CBZ, ADDI, ADDS, AND, EOR, LDUR, LSR, STUR, SUBS, NOOP, ERROR 
+    typedef enum {
+        RESET, B, BLT, CBZ, ADDI, ADDS, AND, EOR, LDUR, LSR, STUR, SUBS, NOOP, ERROR
     } instruction_type;    // Defines all supported instruction types
 
     instruction_type current_instruction;    // Current instruction type being processed
@@ -58,7 +58,7 @@ module cpu(clock, reset);
     //====================================================================================
     // CONTROL SIGNALS
     //====================================================================================
-    
+
     // Main control signals
     logic reg_to_loc;          // 0: Use rd_addr as second register, 1: Use rm_addr
     logic alu_src;             // 0: Use register value for ALU B input, 1: Use immediate
@@ -68,7 +68,7 @@ module cpu(clock, reset);
     logic mem_write;           // 1: Write to data memory
     logic branch_taken;        // 1: Take branch
     logic uncond_branch;       // 1: Unconditional branch, 0: Conditional branch
-	logic delayed_branch;      // 1: Attempt to take branch in EX for CBZ
+    logic delayed_branch;      // 1: Attempt to take branch in EX for CBZ
     logic lsr_in_use;          // 1: Use LSR result instead of ALU result
     logic debug_mode;          // Debug flag for simulation
     logic flags_should_set;    // 1: Update condition flags
@@ -80,19 +80,19 @@ module cpu(clock, reset);
     logic overflow_flag, temp_overflow_flag;     // Set when operation causes overflow
     logic carryout_flag, temp_carryout_flag;     // Set when operation causes carry
     logic cbz_should_branch;                     // Signal for CBZ branch condition
-	logic cbz_branch_taken;
+    logic cbz_branch_taken;
     logic blt_should_branch;                     // Signal for B.LT branch condition
 
     //====================================================================================
     // REGISTER ADDRESSES
     //====================================================================================
-    
+
     // Register addresses from instruction
     logic [4:0] rd_addr;               // Destination register address
     logic [4:0] rm_addr;               // Second source register address
     logic [4:0] rn_addr;               // First source register address
     logic [4:0] ab_addr;               // Selected second register address (rd_addr or rm_addr)
-    
+
     // Register addresses in pipeline stages
     logic [4:0] rf_rd_addr;            // Destination register in RF stage
     logic [4:0] ex_rd_addr;            // Destination register in EX stage
@@ -100,21 +100,21 @@ module cpu(clock, reset);
     logic [4:0] wb_rd_addr;            // Destination register in WB stage
     logic [4:0] rf_rm_addr;            // Second source register in RF stage
     logic [4:0] rf_rn_addr;            // First source register in RF stage
-    
+
     // Special register constant
     logic [4:0] do_not_write;          // Special register that can't be written to (x31)
 
     //====================================================================================
     // IMMEDIATE VALUES
     //====================================================================================
-    
+
     // Immediate fields from instruction
     logic [8:0] d_addr_9;              // 9-bit immediate for memory addressing
     logic [11:0] imm_12;               // 12-bit immediate for ALU operations
     logic [18:0] cond_addr_19;         // 19-bit conditional branch address field
     logic [25:0] branch_addr_26;       // 26-bit unconditional branch address field
     logic [5:0] ex_shift_amount;       // Shift amount for LSR instruction
-    
+
     // Immediate fields in RF stage
     logic [8:0] rf_d_addr_9;           // 9-bit immediate in RF stage
     logic [11:0] rf_imm_12;            // 12-bit immediate in RF stage
@@ -122,15 +122,15 @@ module cpu(clock, reset);
     //====================================================================================
     // DATA PATH SIGNALS
     //====================================================================================
-    
+
     // Extended immediate values
     logic [63:0] d_addr_extended;      // Sign-extended 9-bit immediate for memory addressing
     logic [63:0] imm12_extended;       // Zero-extended 12-bit immediate for ALU operations
     logic [63:0] cond_addr_extended;   // Sign-extended conditional branch address
     logic [63:0] branch_addr_extended; // Sign-extended unconditional branch address
     logic [63:0] ex_branch_addr_extended; // Sign-extended unconditional branch address
-	logic [63:0] rf_cond_addr_extended, ex_cond_addr_extended, mem_cond_addr_extended; //for cbz delayed branching
-    
+    logic [63:0] rf_cond_addr_extended, ex_cond_addr_extended, mem_cond_addr_extended; //for cbz delayed branching
+
     // ALU and data signals
     logic [63:0] write_to_register;    // Data to be written to register file
     logic [63:0] alu_b_input;          // B input to ALU (register or immediate)
@@ -141,33 +141,34 @@ module cpu(clock, reset);
     logic [63:0] data_out;             // Data read from data memory
     logic [63:0] alu_mux_input;        // Direct output from ALU before LSR mux
     logic [63:0] lsr_mux_input;        // Output from LSR unit
-    
+
     // Program counter and branch signals
     logic [63:0] program_counter;      // Current program counter value
     logic [63:0] ex_program_counter;   // 1-stage delayed pipelined program counter value
     logic [63:0] chosen_addr;          // Selected branch address based on branch type
     logic [63:0] shifted_addr;         // Branch address shifted left by 2 bits
     logic [63:0] next_count_branch;    // Next PC if branch is taken
-	logic [63:0] cbz_next_branch;      // Next PC if CBZ is taken
-	logic [63:0] branch_addr_final;    // Next PC if any branch is taken after pipeline
+    logic [63:0] cbz_next_branch;      // Next PC if CBZ is taken
+    logic [63:0] branch_addr_final;    // Next PC if any branch is taken after pipeline
     logic [63:0] next_count;           // Next PC if branch is not taken (PC+4)
-	logic [63:0] temp_addr;			   // Mux input for branch selection
+    logic [63:0] temp_addr;			   // Mux input for branch selection
     logic [63:0] next_addr;            // Final next PC value
 
     // Single bit pipelined branch control signals
-    logic ex_uncond_branch;             // Pipelined unconditional branch signal 
+    logic ex_uncond_branch;             // Pipelined unconditional branch signal
     logic ex_branch_taken_final;        // Combined branch taken signal in EX stage
     logic branch_taken_final;           // Final branch taken signal after pipelining
     logic ex_cbz_branch_taken;          // CBZ branch taken signal in EX stage
+    logic mem_cbz_branch_taken;          // CBZ branch taken signal in EX stage
     logic ex_delayed_branch;            // Delayed branch signal for CBZ in EX stage
 
     //====================================================================================
     // PIPELINE REGISTERS
     //====================================================================================
-    
+
     // Pipeline enable signal
     logic pipeline_enable;             // Active when not in reset
-    
+
     // Data pipeline registers
     logic [63:0] if_out;               // Output from IF stage
     logic [63:0] rf_a_out;             // First operand from RF stage
@@ -180,7 +181,7 @@ module cpu(clock, reset);
     logic [63:0] mem_out;              // Data from MEM stage
     logic [4:0] mem_w_out;            // Destination register address from MEM stage
     logic [63:0] rf_bypass_out;        // Bypass data for store instructions
-    
+
     // Instruction pipeline registers
     logic [31:0] ex_instruction;       // Instruction in EX stage
     logic [31:0] mem_instruction;      // Instruction in MEM stage
@@ -189,52 +190,51 @@ module cpu(clock, reset);
     //====================================================================================
     // FORWARDING UNIT SIGNALS
     //====================================================================================
-    
+
     // Forwarding inputs
     logic [63:0] rf_a_input;           // Input A to RF stage (possibly forwarded)
     logic [63:0] rf_b_input;           // Input B to RF stage (possibly forwarded)
 
-    
     // Equality check results
     logic eq_rn_ex, eq_rn_mem, eq_rn_wb;    // Equality check results for rn_addr
     logic eq_rd_ex, eq_rd_mem, eq_rd_wb;    // Equality check results for rd_addr
     logic eq_rm_ex, eq_rm_mem, eq_rm_wb;    // Equality check results for rm_addr
-    
+
     // Register writability signals
     logic rn_cant_write, rn_can_write;      // Whether rn_addr can be written to
     logic rd_cant_write, rd_can_write;      // Whether rd_addr can be written to
     logic rm_cant_write, rm_can_write;      // Whether rm_addr can be written to
-    
+
     // Control signal inversions
     logic not_reg_to_loc, not_alu_src;      // Inverted control signals
-    
+
     // Forwarding control signals
     // From EX stage
     logic forward_rd_exec_to_a;             // Forward from EX to A input
     logic forward_rd_exec_to_rd;            // Forward from EX to rd_addr
     logic forward_rd_exec_to_rm;            // Forward from EX to rm_addr
     logic forward_rd_exec_to_b;             // Forward from EX to B input
-    
+
     // From MEM stage
     logic forward_rd_mem_to_a;              // Forward from MEM to A input
     logic forward_rd_mem_to_rd;             // Forward from MEM to rd_addr
     logic forward_rd_mem_to_rm;             // Forward from MEM to rm_addr
     logic forward_rd_mem_to_b;              // Forward from MEM to B input
-    
+
     // From WB stage
     logic forward_rd_wb_to_a;               // Forward from WB to A input
     logic forward_rd_wb_to_rd;              // Forward from WB to rd_addr
     logic forward_rd_wb_to_rm;              // Forward from WB to rm_addr
     logic forward_rd_wb_to_b;               // Forward from WB to B input
-    
+
     // Forwarding data signals
     logic [63:0] forwarding_choice_a;       // Selected data for A input
     logic [63:0] forwarding_choice_b;       // Selected data for B input
     logic [63:0] mem_wb_forwarding_choice_a; // Selected data from MEM/WB for A
-    logic [63:0] mem_wb_forwarding_choice_b; // Selected data from MEM/WB for B    
+    logic [63:0] mem_wb_forwarding_choice_b; // Selected data from MEM/WB for B
     logic [63:0] ldur_forward_data;     // Selected data from MEM/WB for stur/ldur
     logic [63:0] ldur_b_forward_result; // selected data from stur/ldur muxing
-    
+
     // Final forwarding control signals
     logic mem_wb_forward_a, mem_wb_forward_b; // Control signals for MEM/WB forwarding
     logic forward_a, forward_b;               // Final forwarding control signals
@@ -243,7 +243,6 @@ module cpu(clock, reset);
     // PIPELINED CONTROL SIGNALS
     //====================================================================================
 
-    
     // EX stage control signals
     logic ex_reg_write;                // Register write in EX stage
     logic ex_mem_write;                // Memory write in EX stage
@@ -252,13 +251,13 @@ module cpu(clock, reset);
     logic ex_flags_should_set;         // Flag update in EX stage
     logic ex_lsr_in_use;               // LSR use in EX stage
     logic [2:0] ex_alu_op;             // ALU operation in EX stage
-    
+
     // MEM stage control signals
     logic mem_reg_write;               // Register write in MEM stage
     logic mem_mem_write;               // Memory write in MEM stage
     logic mem_read_mem;              // Memory to register in MEM stage
     logic mem_reg_to_loc;              // Register to location in MEM stage
-    
+
     // WB stage control signals
     logic wb_reg_write;                // Register write in WB stage
     logic wb_read_mem;
@@ -272,34 +271,31 @@ module cpu(clock, reset);
     logic reset_flush_rf;              // Register .reset input, = flush_rf | flush_ex | reset
     logic reset_flush_ex;              // Register .reset input, = flush_ex | reset
 
-
     //====================================================================================
     // OPCODE CONSTANTS
     //====================================================================================
 
-// Top 6-bit opcodes
-localparam [5:0] OPCODE_B    = 6'b000101;
+	// Top 6-bit opcodes
+	localparam [5:0] OPCODE_B    = 6'b000101;
 
-// Top 8-bit opcodes
-localparam [7:0] OPCODE_BLT  = 8'b01010100;
-localparam [7:0] OPCODE_CBZ  = 8'b10110100;
+	// Top 8-bit opcodes
+	localparam [7:0] OPCODE_BLT  = 8'b01010100;
+	localparam [7:0] OPCODE_CBZ  = 8'b10110100;
 
-// Top 10-bit opcodes
-localparam [9:0] OPCODE_ADDI = 10'b1001000100;
+	// Top 10-bit opcodes
+	localparam [9:0] OPCODE_ADDI = 10'b1001000100;
 
-// Top 11-bit opcodes
-localparam [10:0] OPCODE_ADDS = 11'b10101011000;
-localparam [10:0] OPCODE_AND  = 11'b10001010000;
-localparam [10:0] OPCODE_EOR  = 11'b11001010000;
-localparam [10:0] OPCODE_LDUR = 11'b11111000010;
-localparam [10:0] OPCODE_LSR  = 11'b11010011010;
-localparam [10:0] OPCODE_STUR = 11'b11111000000;
-localparam [10:0] OPCODE_SUBS = 11'b11101011000;
+	// Top 11-bit opcodes
+	localparam [10:0] OPCODE_ADDS = 11'b10101011000;
+	localparam [10:0] OPCODE_AND  = 11'b10001010000;
+	localparam [10:0] OPCODE_EOR  = 11'b11001010000;
+	localparam [10:0] OPCODE_LDUR = 11'b11111000010;
+	localparam [10:0] OPCODE_LSR  = 11'b11010011010;
+	localparam [10:0] OPCODE_STUR = 11'b11111000000;
+	localparam [10:0] OPCODE_SUBS = 11'b11101011000;
 
-// Special opcodes
-localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
-
-
+	// Special opcodes
+	localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
 
     //====================================================================================
     // INSTRUCTION FETCH STAGE
@@ -313,32 +309,30 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     // Sign extend branch address fields to 64 bits
     sign_extend #(.IMMLENGTH(19)) cond_extend   (.in(cond_addr_19),   .is_signed(1'b1), .out(cond_addr_extended));
     sign_extend #(.IMMLENGTH(26)) branch_extend (.in(branch_addr_26), .is_signed(1'b1), .out(branch_addr_extended));
-	
-	//pipeline for b
-	register rf_addr_26_reg (.clk(clock), .in(branch_addr_extended), .reset(reset), .enable(pipeline_enable), .out(ex_branch_addr_extended));
-    register #(.WIDTH(1)) rf_uncond_branch_reg (.clk(clock), .in(uncond_branch), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_uncond_branch));
-    register #(.WIDTH(1)) rf_branch_taken_reg (.clk(clock), .in(branch_taken), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_branch_taken));
-	register rf_pc_reg (.clk(clock), .in(program_counter), .reset(reset), .enable(pipeline_enable), .out(ex_program_counter));
 
+    //pipeline for b
+    register rf_addr_26_reg (.clk(clock), .in(branch_addr_extended), .reset(reset), .enable(pipeline_enable), .out(ex_branch_addr_extended));
+    register #(.WIDTH(1)) rf_uncond_branch_reg (.clk(clock), .in(uncond_branch), .reset(reset), .enable(pipeline_enable), .out(ex_uncond_branch));
+    register #(.WIDTH(1)) rf_branch_taken_reg (.clk(clock), .in(branch_taken), .reset(reset), .enable(pipeline_enable), .out(ex_branch_taken));
+    register rf_pc_reg (.clk(clock), .in(program_counter), .reset(reset), .enable(pipeline_enable), .out(ex_program_counter));
 
-	//Pipeline for cbz and conditional branches
-	register rf_cond_addr_19_reg (.clk(clock), .in(cond_addr_extended), .reset(reset), .enable(pipeline_enable), .out(ex_cond_addr_extended));
-	register ex_cond_addr_19_reg (.clk(clock), .in(ex_cond_addr_extended), .reset(reset), .enable(pipeline_enable), .out(mem_cond_addr_extended));
-    register #(.WIDTH(1)) rf_cbz_branch_taken_reg (.clk(clock), .in(cbz_branch_taken), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_cbz_branch_taken));
-	register #(.WIDTH(1)) rf_cbz_should_branch_reg (.clk(clock), .in(cbz_should_branch), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_cbz_should_branch));
+    //Pipeline for cbz and conditional branches
+    register rf_cond_addr_19_reg (.clk(clock), .in(cond_addr_extended), .reset(reset), .enable(pipeline_enable), .out(ex_cond_addr_extended));
+    register ex_cond_addr_19_reg (.clk(clock), .in(ex_cond_addr_extended), .reset(reset), .enable(pipeline_enable), .out(mem_cond_addr_extended));
+    register #(.WIDTH(1)) rf_cbz_branch_taken_reg (.clk(clock), .in(cbz_branch_taken), .reset(reset), .enable(pipeline_enable), .out(ex_cbz_branch_taken));
+	register #(.WIDTH(1)) ex_cbz_branch_taken_reg (.clk(clock), .in(ex_cbz_branch_taken), .reset(reset), .enable(pipeline_enable), .out(mem_cbz_branch_taken));
+    register #(.WIDTH(1)) rf_cbz_should_branch_reg (.clk(clock), .in(cbz_should_branch), .reset(reset), .enable(pipeline_enable), .out(ex_cbz_should_branch));
 
     //Pipeline for all branches
-	register branch_addr_final_reg (.clk(clock), .in(next_count_branch), .reset(reset), .enable(pipeline_enable), .out(branch_addr_final));
-	register #(.WIDTH(1)) branch_taken_final_reg (.clk(clock), .in(ex_branch_taken_final), .reset(reset_flush_ex), .enable(pipeline_enable), .out(branch_taken_final));
-	
-	
+    register branch_addr_final_reg (.clk(clock), .in(next_count_branch), .reset(reset), .enable(pipeline_enable), .out(branch_addr_final));
+    register #(.WIDTH(1)) branch_taken_final_reg (.clk(clock), .in(ex_branch_taken_final), .reset(reset), .enable(pipeline_enable), .out(branch_taken_final));
 
     // Select between conditional and unconditional branch address
     genvar i;
     generate
         for(i = 0; i < 64; i++) begin : each_br_addr_bit
-		mux2_1 branch_addr_mux (.out(temp_addr[i]), .i0(cond_addr_extended[i]), .i1(branch_addr_extended[i]), .sel(uncond_branch));
-		mux2_1 cbz_addr_mux    (.out(chosen_addr[i]), .i0(temp_addr[i]), .i1(cond_addr_extended[i]),  .sel(cbz_branch_taken));
+        mux2_1 branch_addr_mux (.out(temp_addr[i]), .i0(cond_addr_extended[i]), .i1(branch_addr_extended[i]), .sel(uncond_branch));
+        mux2_1 cbz_addr_mux    (.out(chosen_addr[i]), .i0(temp_addr[i]), .i1(cond_addr_extended[i]),  .sel(cbz_branch_taken));
         end
     endgenerate
 
@@ -348,12 +342,12 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     // Calculate the next address options
     adder branch_adder (.A(shifted_addr), .B(ex_program_counter), .sum(next_count_branch), .carry_out(), .overflow());
     adder count_adder  (.A(program_counter), .B(64'h4), .sum(next_count), .carry_out(), .overflow());
-	
-	or #delay (ex_branch_taken_final, branch_taken, cbz_branch_taken);
-	
-	//Flush logic
-	or #delay (reset_flush_ex, reset, ex_cbz_branch_taken);
-	or #delay (reset_flush_rf, reset, reset_flush_ex, ex_branch_taken);
+
+    or #delay (ex_branch_taken_final, branch_taken, cbz_branch_taken);
+
+    //Flush logic
+    or #delay (reset_flush_ex, reset, ex_cbz_branch_taken);
+    or #delay (reset_flush_rf, reset, reset_flush_ex, ex_branch_taken);
 
     // Select between PC+4 and branch target based on branch_taken signal
     generate
@@ -365,27 +359,26 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
         // Select between normal instruction and NO_OP for flushing
     generate
         for(i = 0; i < 64; i++) begin : each_noop_mux_bit
-            mux2_1 noop_mux (.out(instruction[i]), .i0(instruction_temp[i]), .i1(OPCODE_NOOP[i]), .sel(reset_flush_rf));
+            mux2_1 noop_mux (.out(instruction[i]), .i0(fetched_instruction[i]), .i1(OPCODE_NOOP[i]), .sel(reset_flush_rf));
         end
     endgenerate
-	
-	
-	//if this is true, the register is 0 and cbz should branch.
-	zero_checker cbz_zero_checker (.in(rf_b_input), .out(cbz_should_branch));
 
-	//if we're at the right stage for CBZ to branch and the register it checked is 0, branch.
-	//NOTE: This should be a higher priority branch than other branches because those instructions will be squashed if we take this.
-	and #delay (cbz_branch_taken, delayed_branch, cbz_should_branch);
-	
+    //if this is true, the register is 0 and cbz should branch.
+    zero_checker cbz_zero_checker (.in(rf_b_input), .out(cbz_should_branch));
+
+    //if we're at the right stage for CBZ to branch and the register it checked is 0, branch.
+    //NOTE: This should be a higher priority branch than other branches because those instructions will be squashed if we take this.
+    and #delay (cbz_branch_taken, delayed_branch, cbz_should_branch);
+
     // Branch condition logic for B.LT instruction
     // I likely will need to come back to this, it's a little jank
 
     //this is essentially a quick and dirty way to forward flags
     not (not_flags_set, ex_flags_should_set);
     and #delay (valid_negative_flag, negative_flag, not_flags_set);
-    or #delay (blt_negative_flag, temp_negative_flag, valid_negative_flag);   
+    or #delay (blt_negative_flag, temp_negative_flag, valid_negative_flag);
     and #delay (valid_overflow_flag, overflow_flag, not_flags_set);
-    or #delay (blt_overflow_flag, temp_overflow_flag, valid_overflow_flag); 
+    or #delay (blt_overflow_flag, temp_overflow_flag, valid_overflow_flag);
 
     xor #delay (blt_should_branch, blt_negative_flag, blt_overflow_flag);  // B.LT branches when N≠V
 
@@ -393,9 +386,7 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     register pc_register (.clk(clock), .in(next_addr), .reset(reset), .enable(1'b1), .out(program_counter));
 
     // Instruction memory - fetches the instruction at the current PC
-    instructmem instruction_memory (.address(program_counter), .instruction(instruction_temp), .clk(clock));
-	
-	
+    instructmem instruction_memory (.address(program_counter), .instruction(fetched_instruction), .clk(clock));
 
     //====================================================================================
     // REGISTER FETCH STAGE
@@ -409,7 +400,7 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
 
     // Extract shift amount for LSR instruction
     assign ex_shift_amount = ex_instruction[15:10];
-    
+
     // Extract immediate fields from instruction in RF stage
     assign rf_d_addr_9 = rf_instruction[20:12];
     assign rf_imm_12 = rf_instruction[21:10];
@@ -423,7 +414,7 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
 
     // Register file - reads operands from registers
     register_file cpu_register_file (
-        .clk(clock), 
+        .clk(clock),
         .write_enable(wb_reg_write),       // Write enable from WB stage
         .write_data(mem_out),           // Data to write from MEM stage
         .write_addr(mem_w_out[4:0]),     // Register to write to from MEM stage
@@ -443,7 +434,7 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
         for(i = 0; i < 64; i++) begin : each_data_bit
             // Select between 9-bit and 12-bit immediate based on imm_size
             mux2_1 imm_mux (.out(imm_choice[i]), .i0(d_addr_extended[i]), .i1(imm12_extended[i]), .sel(imm_size));
-            
+
             // Select between register value and immediate for ALU B input
             mux2_1 alu_b_mux (.out(alu_b_input[i]), .i0(rf_b_input[i]), .i1(imm_choice[i]), .sel(alu_src));
         end
@@ -510,7 +501,7 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     //-----------------------------------------------------------------------------------
     // Register Fetch Stage Pipeline Registers
     //-----------------------------------------------------------------------------------
-    
+
     // RF stage data registers
     register rf_a_reg (.clk(clock), .in(rf_a_input), .reset(reset), .enable(pipeline_enable), .out(rf_a_out));
     register rf_b_reg (.clk(clock), .in(alu_b_input), .reset(reset), .enable(pipeline_enable), .out(rf_b_out));
@@ -520,17 +511,17 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     //-----------------------------------------------------------------------------------
     // Execute Stage Pipeline Registers
     //-----------------------------------------------------------------------------------
-    
+
     // EX stage data registers
     register ex_reg   (.clk(clock), .in(alu_result), .reset(reset), .enable(pipeline_enable), .out(ex_out));
-	register ex_a_reg (.clk(clock), .in(rf_a_out), .reset(reset), .enable(pipeline_enable), .out(ex_a_out));
+    register ex_a_reg (.clk(clock), .in(rf_a_out), .reset(reset), .enable(pipeline_enable), .out(ex_a_out));
     register ex_b_reg (.clk(clock), .in(rf_bypass_out), .reset(reset), .enable(pipeline_enable), .out(ex_b_out));
     register #(.WIDTH(5)) ex_w_reg (.clk(clock), .in(rf_w_out), .reset(reset), .enable(pipeline_enable), .out(ex_w_out));
 
     //-----------------------------------------------------------------------------------
     // Memory Stage Pipeline Registers
     //-----------------------------------------------------------------------------------
-    
+
     // MEM stage data registers
     register mem_reg (.clk(clock), .in(write_to_register), .reset(reset), .enable(pipeline_enable), .out(mem_out));
     register #(.WIDTH(5)) mem_w_reg (.clk(clock), .in(ex_w_out), .reset(reset), .enable(pipeline_enable), .out(mem_w_out));
@@ -538,7 +529,7 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     //-----------------------------------------------------------------------------------
     // Instruction Pipeline Registers
     //-----------------------------------------------------------------------------------
-    
+
     // Extract register addresses from pipelined instructions
     assign rf_rd_addr = rf_instruction[4:0];
     assign ex_rd_addr = ex_instruction[4:0];
@@ -560,25 +551,25 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     //-----------------------------------------------------------------------------------
 
     // EX stage control registers
-    register #(.WIDTH(1)) ex_reg_write_reg (.clk(clock), .in(reg_write), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_reg_write));
-    register #(.WIDTH(1)) ex_mem_write_reg (.clk(clock), .in(mem_write), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_mem_write));
-    register #(.WIDTH(1)) ex_read_mem_reg (.clk(clock), .in(read_mem), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_read_mem));
-    register #(.WIDTH(1)) ex_reg_to_loc_reg (.clk(clock), .in(reg_to_loc), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_reg_to_loc));
-    register #(.WIDTH(1)) ex_flags_should_set_reg (.clk(clock), .in(flags_should_set), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_flags_should_set));
-    register #(.WIDTH(1)) ex_lsr_in_use_reg (.clk(clock), .in(lsr_in_use), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_lsr_in_use));
-	register #(.WIDTH(1)) ex_cbz_branch_reg (.clk(clock), .in(delayed_branch), .reset(reset_flush_rf), .enable(pipeline_enable), .out(ex_delayed_branch));
+    register #(.WIDTH(1)) ex_reg_write_reg (.clk(clock), .in(reg_write), .reset(reset), .enable(pipeline_enable), .out(ex_reg_write));
+    register #(.WIDTH(1)) ex_mem_write_reg (.clk(clock), .in(mem_write), .reset(reset), .enable(pipeline_enable), .out(ex_mem_write));
+    register #(.WIDTH(1)) ex_read_mem_reg (.clk(clock), .in(read_mem), .reset(reset), .enable(pipeline_enable), .out(ex_read_mem));
+    register #(.WIDTH(1)) ex_reg_to_loc_reg (.clk(clock), .in(reg_to_loc), .reset(reset), .enable(pipeline_enable), .out(ex_reg_to_loc));
+    register #(.WIDTH(1)) ex_flags_should_set_reg (.clk(clock), .in(flags_should_set), .reset(reset), .enable(pipeline_enable), .out(ex_flags_should_set));
+    register #(.WIDTH(1)) ex_lsr_in_use_reg (.clk(clock), .in(lsr_in_use), .reset(reset), .enable(pipeline_enable), .out(ex_lsr_in_use));
+    register #(.WIDTH(1)) ex_cbz_branch_reg (.clk(clock), .in(delayed_branch), .reset(reset), .enable(pipeline_enable), .out(ex_delayed_branch));
     register #(.WIDTH(3)) ex_alu_op_reg (.clk(clock), .in(alu_op), .reset(reset), .enable(pipeline_enable), .out(ex_alu_op));
 
     // MEM stage control registers
-	register #(.WIDTH(1)) mem_cbz_branch_reg (.clk(clock), .in(ex_delayed_branch), .reset(reset_flush_ex), .enable(pipeline_enable), .out(mem_delayed_branch));
-    register #(.WIDTH(1)) mem_reg_write_reg (.clk(clock), .in(ex_reg_write), .reset(reset_flush_ex), .enable(pipeline_enable), .out(mem_reg_write));
-    register #(.WIDTH(1)) mem_mem_write_reg (.clk(clock), .in(ex_mem_write), .reset(reset_flush_ex), .enable(pipeline_enable), .out(mem_mem_write));
-    register #(.WIDTH(1)) mem_read_mem_reg (.clk(clock), .in(ex_read_mem), .reset(reset_flush_ex), .enable(pipeline_enable), .out(mem_read_mem));
-    register #(.WIDTH(1)) mem_reg_to_loc_reg (.clk(clock), .in(ex_reg_to_loc), .reset(reset_flush_ex), .enable(pipeline_enable), .out(mem_reg_to_loc));
+    register #(.WIDTH(1)) mem_cbz_branch_reg (.clk(clock), .in(ex_delayed_branch), .reset(reset), .enable(pipeline_enable), .out(mem_delayed_branch));
+    register #(.WIDTH(1)) mem_reg_write_reg (.clk(clock), .in(ex_reg_write), .reset(reset), .enable(pipeline_enable), .out(mem_reg_write));
+    register #(.WIDTH(1)) mem_mem_write_reg (.clk(clock), .in(ex_mem_write), .reset(reset), .enable(pipeline_enable), .out(mem_mem_write));
+    register #(.WIDTH(1)) mem_read_mem_reg (.clk(clock), .in(ex_read_mem), .reset(reset), .enable(pipeline_enable), .out(mem_read_mem));
+    register #(.WIDTH(1)) mem_reg_to_loc_reg (.clk(clock), .in(ex_reg_to_loc), .reset(reset), .enable(pipeline_enable), .out(mem_reg_to_loc));
 
     // WB stage control registers
     register #(.WIDTH(1)) wb_reg_write_reg (.clk(clock), .in(mem_reg_write), .reset(reset), .enable(pipeline_enable), .out(wb_reg_write));
-    register #(.WIDTH(1)) wb_read_mem_reg (.clk(clock), .in(mem_read_mem), .reset(reset_flush_ex), .enable(pipeline_enable), .out(wb_read_mem));
+    register #(.WIDTH(1)) wb_read_mem_reg (.clk(clock), .in(mem_read_mem), .reset(reset), .enable(pipeline_enable), .out(wb_read_mem));
 
     //====================================================================================
     // FORWARDING UNIT
@@ -589,7 +580,7 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     //-----------------------------------------------------------------------------------
     // Hazard Detection Logic
     //-----------------------------------------------------------------------------------
-    
+
     // Check if rf_rn_addr (which goes into Aa) of instruction (in the RF stage) is equal to rd_addr in each stage
     equality_checker eq_rn_rf_checker (.in0(rf_rn_addr), .in1(ex_rd_addr), .out(eq_rn_ex));
     equality_checker eq_rn_ex_checker (.in0(rf_rn_addr), .in1(mem_rd_addr), .out(eq_rn_mem));
@@ -611,8 +602,8 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     //-----------------------------------------------------------------------------------
     // Forwarding from Execution Stage
     //-----------------------------------------------------------------------------------
-    
-    // If rf_rn_addr is equal to rd_addr in the exec stage, and we're going to write with rd_addr, 
+
+    // If rf_rn_addr is equal to rd_addr in the exec stage, and we're going to write with rd_addr,
     // and rf_rn_addr is not x31, use the output of the ALU instead of rf_rn_addr
     equality_checker is_rn_x31 (.in0(rf_rn_addr), .in1(do_not_write), .out(rn_cant_write));
     not #delay (rn_can_write, rn_cant_write);
@@ -639,7 +630,7 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     and #delay (forward_rd_exec_to_rd, eq_rd_ex, ex_reg_write, rd_can_write, not_reg_to_loc, not_alu_src_or_stur);
 
     or #delay (not_alu_src_or_stur, not_alu_src, mem_write);
-    
+
     // Forward from EX stage to rm_addr when:
     // - rm_addr matches destination in EX stage
     // - EX stage will write to register file
@@ -647,14 +638,14 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     // - reg_to_loc is 1 (using rm_addr as second operand)
     // - alu_src is 0 (using register value, not immediate)
     and #delay (forward_rd_exec_to_rm, eq_rm_ex, ex_reg_write, rm_can_write, reg_to_loc, not_alu_src);
-    
+
     // Combine forwarding signals for B input
     or #delay (forward_rd_exec_to_b, forward_rd_exec_to_rm, forward_rd_exec_to_rd);
 
     //-----------------------------------------------------------------------------------
     // Forwarding from Memory Stage
     //-----------------------------------------------------------------------------------
-    
+
     // Forward from MEM stage to A input when:
     // - rn_addr matches destination in MEM stage
     // - MEM stage will write to register file
@@ -669,7 +660,7 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     // - reg_to_loc is 0 (using rd_addr as second operand)
     // - alu_src is 0 (using register value, not immediate)
     and #delay (forward_rd_mem_to_rd, eq_rd_mem, mem_reg_write, rd_can_write, not_alu_src, not_reg_to_loc);
-    
+
     // Forward from MEM stage to rm_addr when:
     // - rm_addr matches destination in MEM stage
     // - MEM stage will write to register file
@@ -677,14 +668,14 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     // - reg_to_loc is 1 (using rm_addr as second operand)
     // - alu_src is 0 (using register value, not immediate)
     and #delay (forward_rd_mem_to_rm, eq_rm_mem, mem_reg_write, rm_can_write, not_alu_src, reg_to_loc);
-    
+
     // Combine forwarding signals for B input from MEM stage
     or #delay (forward_rd_mem_to_b, forward_rd_mem_to_rd, forward_rd_mem_to_rm);
 
     //-----------------------------------------------------------------------------------
     // Forwarding from Writeback Stage
     //-----------------------------------------------------------------------------------
-    
+
     // Forward from WB stage to A input when:
     // - rn_addr matches destination in WB stage
     // - WB stage will write to register file
@@ -699,7 +690,7 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     // - reg_to_loc is 0 (using rd_addr as second operand)
     // - alu_src is 0 (using register value, not immediate)
     and #delay (forward_rd_wb_to_rd, eq_rd_wb, wb_reg_write, rd_can_write, not_alu_src, not_reg_to_loc);
-    
+
     // Forward from WB stage to rm_addr when:
     // - rm_addr matches destination in WB stage
     // - WB stage will write to register file
@@ -707,14 +698,14 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     // - reg_to_loc is 1 (using rm_addr as second operand)
     // - alu_src is 0 (using register value, not immediate)
     and #delay (forward_rd_wb_to_rm, eq_rm_wb, wb_reg_write, rm_can_write, not_alu_src, reg_to_loc);
-    
+
     // Combine forwarding signals for B input from WB stage
     or #delay (forward_rd_wb_to_b, forward_rd_wb_to_rd, forward_rd_wb_to_rm);
 
     //-----------------------------------------------------------------------------------
     // Forwarding Muxes
     //-----------------------------------------------------------------------------------
-    
+
     // Choose between MEM and WB forwarding
     generate
         for(i = 0; i < 64; i++) begin : each_mem_wb_forward_choice_mux
@@ -790,42 +781,21 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
         end
     endgenerate
 
-
     //====================================================================================
     // FLAG REGISTERS
     //====================================================================================
     // These registers store condition flags for branch instructions
-    
+
     dff_with_enable zero_flag_dff (.clk(clock), .in(temp_zero_flag), .reset(reset), .enable(ex_flags_should_set), .out(zero_flag));
     dff_with_enable carryout_flag_dff (.clk(clock), .in(temp_carryout_flag), .reset(reset), .enable(ex_flags_should_set), .out(carryout_flag));
     dff_with_enable negative_flag_dff (.clk(clock), .in(temp_negative_flag), .reset(reset), .enable(ex_flags_should_set), .out(negative_flag));
     dff_with_enable overflow_flag_dff (.clk(clock), .in(temp_overflow_flag), .reset(reset), .enable(ex_flags_should_set), .out(overflow_flag));
 
     //====================================================================================
-    // RESET LOGIC
-	//I don't think this is necessary so it's commented out
-    //====================================================================================
-    // Initialize CPU state on reset
-    /*
-    always_ff @(posedge clock) begin
-        if(reset) begin
-            program_counter = 0;
-            next_addr = 0;
-            instruction =    OPCODE_NOOP;  // NOP instruction
-            rf_instruction = OPCODE_NOOP;  // NOP instruction
-            debug_mode = 0;
-            zero_flag = 0;
-            negative_flag = 0;
-            overflow_flag = 0;
-            carryout_flag = 0;
-        end
-    end
-	*/
-    //====================================================================================
     // INSTRUCTION DECODER
     //====================================================================================
     // This combinational logic decodes the instruction and sets control signals
-    
+
 always_comb begin
     case (rf_instruction[31:26])
         OPCODE_B: begin
@@ -879,11 +849,11 @@ always_comb begin
                 default: begin
                     case (rf_instruction[31:22])
                         OPCODE_ADDI: begin
-				if(rf_instruction[31:5] === OPCODE_NOOP[31:5]) begin
-					current_instruction = NOOP;
-				end else begin
-                            		current_instruction = ADDI;
-				end
+                if(rf_instruction[31:5] === OPCODE_NOOP[31:5]) begin
+                    current_instruction = NOOP;
+                end else begin
+                                    current_instruction = ADDI;
+                end
                             reg_to_loc = 1;
                             alu_src = 1;
                             read_mem = 0;
@@ -1041,33 +1011,33 @@ module cpu_testbench();
 
     // Testbench signals
     logic clk, reset;
-    
+
     // Instantiate the CPU
     cpu dut (.clock(clk), .reset);
-    
+
     // Clock generation
     initial begin
         clk = 0;
         forever #(ClockDelay/2) clk <= ~clk;  // Toggle clock every half period
     end
-    
+
     // Test sequence
     integer i;
     initial begin
         // Initialize
-        @(posedge clk); 
-        @(posedge clk); 
-        @(posedge clk); 
-        
+        @(posedge clk);
+        @(posedge clk);
+        @(posedge clk);
+
         // Apply reset
-        reset = 1; @(posedge clk); 
-        
+        reset = 1; @(posedge clk);
+
         // Release reset and run
-        reset = 0; @(posedge clk); 
-        
+        reset = 0; @(posedge clk);
+
         // Run for many clock cycles to observe behavior
         repeat(1500) @(posedge clk);
-        
+
         // End simulation
         $stop;
     end
