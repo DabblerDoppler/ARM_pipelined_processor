@@ -291,7 +291,8 @@ These are used to verify that control and datapath modules operate correctly ove
 
 ## Appendices
 
-### Full ISA Encoding Table| Mnemonic | Format  | Opcode (Binary)       | Description                        |
+### Full ISA Encoding Table
+| Mnemonic | Format  | Opcode (Binary)        | Description                        |
 |----------|---------|------------------------|------------------------------------|
 | ADDI     | I-type  | 1001000100xxxxx        | `Rd = Rn + imm`                    |
 | SUBS     | R-type  | 11101011000xxxxx       | `Rd = Rn - Rm` + flags             |
