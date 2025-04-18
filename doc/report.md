@@ -201,43 +201,113 @@ This module is a parameterized-width zero checker which outputs 1 when all the i
 - implements: none
 
 ## Forwarding and Hazard Handling
-- Overview of forwarding paths
-- Logic for detecting and resolving hazards
-- Stall and NOP insertion where necessary
+
+### Overview of Forwarding Paths
+This CPU implementation includes basic forwarding logic to mitigate data hazards in the pipeline. The forwarding unit supports bypassing results from the memory (MEM) and write-back (WB) stages back to the execute (EX) or register fetch (RF) stages. Specifically, the CPU can forward:
+- ALU results from MEM/WB to EX for dependent arithmetic operations.
+- Load results from WB to EX, with special consideration to ensure values are valid only after the memory stage completes.
+
+### Logic for Detecting and Resolving Hazards
+Hazards are detected by comparing destination registers of instructions in later stages with source registers of the current instruction in EX or RF. If a match is found and the write enable signal is active, the forwarding paths are activated accordingly. For load-use hazards (where the value being loaded hasn't completed memory access), a stall is inserted.
+
+### Stall and NOP Insertion
+Stalls are implemented by holding PC and IF/ID pipeline registers and injecting a NOP into the decode stage. This occurs specifically for load-use hazards when a value is not yet ready. Branch instructions insert NOPs by default after branching to prevent issues with pipeline flush.
+
+---
 
 ## Instruction Set
-| Mnemonic | Operation              | Description                     |
-|----------|------------------------|---------------------------------|
-| ADDI     | Add Immediate          | `Rd = Rn + imm`                 |
-| SUBS     | Subtract and Set Flags | `Rd = Rn - Rm`                  |
-| ...      | ...                    | ...                             |
+
+| Mnemonic | Operation              | Description                      |
+|----------|------------------------|----------------------------------|
+| ADDI     | Add Immediate           | `Rd = Rn + imm`                  |
+| SUBS     | Subtract and Set Flags  | `Rd = Rn - Rm`                   |
+| ADDS     | Add and Set Flags       | `Rd = Rn + Rm`                   |
+| AND      | Bitwise AND operation   | `Rd = Rn & Rm`                   |
+| EOR      | Bitwise XOR operation   | `Rd = Rn ^ Rm`                   |
+| LDUR     | Load                    | `Rt = Mem[Rn + imm]`             |
+| STUR     | Store                   | `Mem[Rn + imm] = Rt`             |
+| B        | Unconditional Branch    | `PC = PC + imm`                  |
+| CBZ      | Compare, Branch if Zero | `if (Rt == 0) PC = PC + imm`     |
+| BLT      | Branch if Less Than     | `if (N && !Z) PC = PC + imm`     |
+
+---
 
 ## Testing
-- Description of testbench setup
-- Sample programs and their expected register states
-- How hazards and edge cases were verified
 
-## Integration with Peripherals
-- Description of any I/O devices (e.g., VGA, audio)
-- How the CPU communicates with them
-- Memory-mapped I/O scheme, if used
+### Description of Testbench Setup
+The testbench initializes the CPU and provides clock and reset signals. It loads binary programs into instruction memory and simulates execution across multiple clock cycles. Internal state such as register file contents and memory values are observed using waveform viewers.
+
+### Sample Programs and Expected Register States
+Test programs include arithmetic sequences, branching scenarios, and memory access patterns. For instance:
+- A pipelining test that ensures the pipelining logic is correct in a variety of scenarios
+- An implementation of Bubble Sort
+
+These programs all have the expected outputs in instruction memory and in the test file itself. Some of the tests have a value differing between pipelined and nonpipelined processors - the expected value for this processor is the *non-pipelined* value. This is because the inital project requirements didn't have flushing as a requirement.
+
+### How Hazards and Edge Cases Were Verified
+Each test case was written to explicitly trigger known hazard scenarios, including:
+- Arithmetic dependencies across adjacent instructions
+- Load followed immediately by a dependent arithmetic operation
+- Branch decisions taken with delay slots
+Waveform analysis confirmed correct pipeline behavior and data integrity.
+
+---
 
 ## Known Issues and Limitations
-- Any corner cases not supported
-- Unimplemented features (e.g., branching delays, exceptions)
+- No support for exceptions or interrupts.
+- No floating-point instructions or co-processors.
+- Branch delay slots are handled via NOP insertion rather than dynamic resolution.
+- Only a minimal subset of the ARMv8 instruction set is implemented.
+
+---
 
 ## Future Work
-- Plans for performance improvements
-- Support for more instructions or co-processors
-- Integrating DSP blocks or bus protocols
+I may expand on this project at a later time with the following:
+- Expand ISA to include shift and multiply operations.
+- Add support for interrupt handling and exception vectors.
+- Integrate a VGA display module using memory-mapped IO and a custom DISP instruction.
+
+---
 
 ## Build and Simulation
-- Required tools (e.g., Icarus Verilog, ModelSim)
-- How to compile and run tests
-- Expected output waveforms and how to interpret them
+
+### Required Tools
+- Modelsim
+
+### How to Compile and Run Tests
+1. Write the test program in binary.
+2. Place the test program in the benchmarks folder and set instruction memory's BENCHMARK variable.
+3. Run the simulation: `do runlab.do` in modelsim.
+4. View the output waveform.
+
+### Expected Output Waveforms
+Waveform outputs include:
+- Clock and reset signals
+- Pipeline register values
+- Register file changes
+These are used to verify that control and datapath modules operate correctly over time.
+
+---
 
 ## Appendices
-- Full ISA encoding table
-- Timing diagrams
-- Register map
-- Code snippets for interesting modules (optional)
+
+### Full ISA Encoding Table| Mnemonic | Format  | Opcode (Binary)       | Description                        |
+|----------|---------|------------------------|------------------------------------|
+| ADDI     | I-type  | 1001000100xxxxx        | `Rd = Rn + imm`                    |
+| SUBS     | R-type  | 11101011000xxxxx       | `Rd = Rn - Rm` + flags             |
+| ADDS     | R-type  | 10101011000xxxxx       | `Rd = Rn + Rm` + flags             |
+| AND      | R-type  | 10001010000xxxxx       | `Rd = Rn & Rm`                     |
+| EOR      | R-type  | 11001010000xxxxx       | `Rd = Rn ^ Rm`                     |
+| LDUR     | D-type  | 11111000010xxxxx       | `Rt = Mem[Rn + imm]`               |
+| STUR     | D-type  | 11111000000xxxxx       | `Mem[Rn + imm] = Rt`               |
+| B        | B-type  | 000101xxxxxxxxxx       | `PC = PC + imm`                    |
+| CBZ      | CB-type | 10110100xxxxxxxx       | `if (Rt == 0) PC = PC + imm`       |
+| BLT      | CB-type | 01010100xxxxxxxx       | `if (N && !Z) PC = PC + imm`       |
+
+*Note: Encoding bits shown are partial for brevity; full instruction encoding includes register fields and immediate values as per instruction format.*
+
+### Timing Diagrams
+Includes:
+- Pipeline progression for sequential instructions
+- Forwarding and stall events
+- Memory access timing
