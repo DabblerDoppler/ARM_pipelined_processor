@@ -371,9 +371,8 @@ module cpu(clock, reset);
     and #delay (cbz_branch_taken, delayed_branch, cbz_should_branch);
 
     // Branch condition logic for B.LT instruction
-    // I likely will need to come back to this, it's a little jank
 
-    //this is essentially a quick and dirty way to forward flags
+    //Flag forwarding for B.LT
     not (not_flags_set, ex_flags_should_set);
     and #delay (valid_negative_flag, negative_flag, not_flags_set);
     or #delay (blt_negative_flag, temp_negative_flag, valid_negative_flag);
@@ -715,8 +714,8 @@ module cpu(clock, reset);
     endgenerate
 
     // Select control signals for MEM/WB forwarding
-    mux2_1 mem_wb_a_forward_choice_mux_e (.out(mem_wb_forward_a), .i0(forward_rd_wb_to_a), .i1(forward_rd_mem_to_a), .sel(forward_rd_mem_to_a));
-    mux2_1 mem_wb_b_forward_choice_mux_e (.out(mem_wb_forward_b), .i0(forward_rd_wb_to_b), .i1(forward_rd_mem_to_b), .sel(forward_rd_mem_to_b));
+    or #delay (mem_wb_forward_a, forward_rd_wb_to_a, forward_rd_mem_to_a);
+    or #delay (mem_wb_forward_b, forward_rd_wb_to_b, forward_rd_mem_to_b);
 
     // Choose between MEM/WB forwarding and EX forwarding
     // EX forwarding has higher priority
