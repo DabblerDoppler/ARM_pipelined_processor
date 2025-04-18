@@ -39,6 +39,7 @@ The CPU follows a classic five-stage pipelined datapath. The stages are:
 
 2. **Register Fetch (RF)**  
    The fetched instruction is decoded. Source register addresses are used to read from the register file. Immediate values are sign-extended if needed. Control signals are generated for the rest of the pipeline based on the instruction opcode and function bits. Branch logic for B.LT and B is determined.
+*Note: I have this labelled as "RF" rather than "ID" because when I started this project I was decoding instructions during the first pipeline cycle. I've since changed that - RF and ID are the same stage.*
 
 3. **Execute (EX)**  
    The ALU performs the arithmetic or logical operation using operands from the RF stage. This stage handles CBZ target calculation as well.
@@ -53,7 +54,7 @@ The CPU follows a classic five-stage pipelined datapath. The stages are:
 
 Control signals are generated in the RF stage and propagate down the pipeline. Forwarding logic prevents data hazards by dynamically selecting between register file data, MEM results, or WB results using multiplexers. Branch control flow is managed in the EX and MEM stages, allowing for early PC redirection when needed.
 
-The entire pipeline is synchronized on a positive-edge clock. Reset initializes all pipeline registers and control paths. Bubble insertion (NOP injection) is used when hazards require it, and a global stall signal halts instruction fetch to maintain pipeline correctness.
+The entire pipeline is synchronized on a positive-edge clock. Reset initializes all pipeline registers and control paths. Bubble insertion (NOP injection) is used when hazards require it.
 
 
 ## Pipeline Design
@@ -209,15 +210,16 @@ This module is a parameterized-width zero checker which outputs 1 when all the i
 ## Forwarding and Hazard Handling
 
 ### Overview of Forwarding Paths
-This CPU implementation includes basic forwarding logic to mitigate data hazards in the pipeline. The forwarding unit supports bypassing results from the memory (MEM) and write-back (WB) stages back to the execute (EX) or register fetch (RF) stages. Specifically, the CPU can forward:
-- ALU results from MEM/WB to EX for dependent arithmetic operations.
+This CPU implementation includes forwarding logic to mitigate data hazards in the pipeline. The forwarding unit supports bypassing results from the memory (MEM) and write-back (WB) stages back to the execute (EX) or register fetch (RF) stages. Specifically, the CPU can forward:
+- ALU results from MEM/WB to EX for dependent arithmetic operations. Instructions earlier in the pipeline have priority over instructions later, because they have the most recent values.
 - Load results from WB to EX, with special consideration to ensure values are valid only after the memory stage completes.
+- Other load-use hazards are not covered with this design. 
 
 ### Logic for Detecting and Resolving Hazards
-Hazards are detected by comparing destination registers of instructions in later stages with source registers of the current instruction in EX or RF. If a match is found and the write enable signal is active, the forwarding paths are activated accordingly. For load-use hazards (where the value being loaded hasn't completed memory access), a stall is inserted.
+Hazards are detected by comparing destination registers of instructions in later stages with source registers of the current instruction in EX or RF. If a match is found and the write enable signal is active, the forwarding paths are activated accordingly. X31 is also marked as a special register to ensure that forwarding logic doesn't incorrectly override its always-zero state.
 
-### Stall and NOP Insertion
-Stalls are implemented by holding PC and IF/ID pipeline registers and injecting a NOP into the decode stage. This occurs specifically for load-use hazards when a value is not yet ready. Branch instructions insert NOPs by default after branching to prevent issues with pipeline flush.
+### NOP Insertion
+Branch instructions insert NOPs by default after branching to prevent issues with pipeline flush.
 
 ---
 
