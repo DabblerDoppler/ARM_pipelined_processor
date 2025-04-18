@@ -313,8 +313,10 @@ These are used to verify that control and datapath modules operate correctly ove
 
 *Note: Encoding bits shown are partial for brevity; full instruction encoding includes register fields and immediate values as per instruction format.*
 
-### Timing Diagrams
-Includes:
-- Pipeline progression for sequential instructions
-- Forwarding and stall events
-- Memory access timing
+### Test Output Examples
+#### ADDI and B test
+![ADDI and B test output](./img/ADDI_test_output.PNG)
+#### Forwarding and conditional branches
+![Pipelining test output](./img/pipelining_test_output.PNG)
+#### Bubble Sort
+![Bubble Sort output](./img/bubble_sort_output.PNG)
