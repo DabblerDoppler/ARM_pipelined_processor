@@ -2,24 +2,24 @@
 
 //This is a standard implementation of a full-adder at the gate level.
 
-module full_adder (A, B, Cin, Cout, sum);
+module full_adder (A, B, c_in, c_out, sum);
 
 	parameter delay = 50;
 
-	input logic A, B, Cin;
-	output logic Cout, sum;
+	input logic A, B, c_in;
+	output logic c_out, sum;
 
 
-	logic AXorB, AXorBAndCin, AAndB;
+	logic a_xor_b, a_xor_b_and_c_in, a_and_b;
 
-	//sum = (A Xor B) Xor Cin
-	xor #delay Xor1 (AXorB, A, B);
-	xor #delay xor2 (sum, AXorB, Cin);
+	//sum = (A Xor B) Xor c_in
+	xor #delay Xor1 (a_xor_b, A, B);
+	xor #delay xor2 (sum, a_xor_b, c_in);
 
 
-	//Cout = ((A Xor B) & Cin) | (A & B)
-	and #delay and1 (AXorBAndCin, AXorB, Cin);
-	and #delay and2 (AAndB, A, B);
-	or #delay or1 (Cout, AAndB, AXorBAndCin);
+	//c_out = ((A Xor B) & c_in) | (A & B)
+	and #delay and1 (a_xor_b_and_c_in, a_xor_b, c_in);
+	and #delay and2 (a_and_b, A, B);
+	or #delay or1 (c_out, a_and_b, a_xor_b_and_c_in);
 
 endmodule

@@ -1,8 +1,6 @@
 
 `timescale 1ps/1ps
 
-//This is a width-parameterized adder module made out of full adders. 
-
 module adder #(parameter WIDTH = 64)(A, B, sum, carry_out, overflow);
 
 	parameter delay = 50;
@@ -12,7 +10,7 @@ module adder #(parameter WIDTH = 64)(A, B, sum, carry_out, overflow);
 	input logic[WIDTH-1:0] A, B;
 
 	output logic[WIDTH-1:0] sum; 
-	output logic carry_out, overflow;
+	output logic carryOut, overflow;
 
 	logic [WIDTH-1:0] internal_carry;
 	
@@ -21,16 +19,16 @@ module adder #(parameter WIDTH = 64)(A, B, sum, carry_out, overflow);
 
 	genvar i;
 
-	full_adder start_adder (.A(A[0]), .B(B[0]), .c_in(zero), .c_out(internal_carry[0]), .sum(sum[0]));
+	full_adder start_adder (.A(A[0]), .B(B[0]), .Cin(zero), .Cout(internal_carry[0]), .sum(sum[0]));
 
 	generate 
 		for(i=1; i<WIDTH-1; i++) begin : middle_adders
-			full_adder middle_adder (.A(A[i]), .B(B[i]), .c_in(internal_carry[i-1]), .c_out(internal_carry[i]), .sum(sum[i]));
+			full_adder middle_adder (.A(A[i]), .B(B[i]), .Cin(internal_carry[i-1]), .Cout(internal_carry[i]), .sum(sum[i]));
 		end
 	endgenerate
 
 
-	full_adder end_adder (.A(A[WIDTH-1]), .B(B[WIDTH-1]), .c_in(internal_carry[WIDTH-2]), .c_out(carryOut), .sum(sum[WIDTH-1]));
+	full_adder end_adder (.A(A[WIDTH-1]), .B(B[WIDTH-1]), .Cin(internal_carry[WIDTH-2]), .Cout(carryOut), .sum(sum[WIDTH-1]));
 	
 	
 	//overflow only occurs if the two numbers being added have the same sign ~(A xor B), and the output has a different sign ~(A xor sum)

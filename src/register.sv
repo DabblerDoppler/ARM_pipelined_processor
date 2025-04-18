@@ -6,9 +6,9 @@ module register #(
 	parameter WIDTH=64, 
 	parameter RESET=1'b0
 ) (clk, in, reset, enable, out);
-	output logic [WIDTH-1:0] out;
 	input logic [WIDTH-1:0] in;
 	input logic clk, enable, reset;
+	output logic [WIDTH-1:0] out;
 	
 	initial assert (WIDTH > 0);
 

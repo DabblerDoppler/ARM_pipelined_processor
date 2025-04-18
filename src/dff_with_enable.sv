@@ -1,5 +1,5 @@
-//this is a simple d flip-flop which has an enable telling it when it can write new data.
-//it also has a parametrized reset to 0 or 1.
+//This is a d flip-flop which has an enable telling it when it can write new data.
+//It also inherits the parametrized reset to 0 or 1 from the other d_flipflop module.
 
 `timescale 1ps/1ps
 module dff_with_enable #(
@@ -22,13 +22,6 @@ module dff_with_enable #(
 	and #delay myAnd_2(inAndEnable, in, enable);
 	or #delay myOr(nextVal, notEnableAndOut, inAndEnable);
 	
-	
-	
-	/*
-	always_comb begin
-		nextVal = (~enable & out) | (in & enable);		
-	end
-	*/
 
 	d_flipflop #(.RESET(RESET)) dflipflop (.q(out), .d(nextVal), .reset(reset), .clk(clk));	
 

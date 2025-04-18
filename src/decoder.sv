@@ -26,9 +26,9 @@ module decoder_recursive #(parameter WIDTH=32) (enable, in, out);
 		//end case, just divide the inputs into two bits by using in
 		if(WIDTH < 3) begin
 			
-			logic inNot;
-			not #delay myNot (inNot, in);
-			and #delay myAnd_0 (out[0], enable, inNot);
+			logic in_not;
+			not #delay myNot (in_not, in);
+			and #delay myAnd_0 (out[0], enable, in_not);
 			and #delay myAnd_1 (out[1], enable, in);
 			
 		//else recurse, creating another decoder of half size and then splitting the outputs with the last bit
@@ -38,9 +38,9 @@ module decoder_recursive #(parameter WIDTH=32) (enable, in, out);
 			for(i = 0; i < (WIDTH); i++) begin : eachOut
 				if((i % 2) == 0) begin
 					// out[i] = ~in[0] & tempOut[temp]
-					logic inNot;
-					not #delay myNot (inNot, in[0]);
-					and #delay myAnd (out[i], inNot, tempOut[i/2]);
+					logic in_not;
+					not #delay myNot (in_not, in[0]);
+					and #delay myAnd (out[i], in_not, tempOut[i/2]);
 				end else begin
 					// out[i] = in[0] & tempOut[temp]
 					and #delay myAnd(out[i], in[0], tempOut[i/2]);	

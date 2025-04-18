@@ -346,8 +346,8 @@ localparam [31:0] OPCODE_NOOP = 31'h91000000; // ADDI X0, X0, #0 — No-op
     linear_shift_left #(.SHIFT(2)) addr_shifter (.in(chosen_addr), .enable(1'b1), .out(shifted_addr));
 
     // Calculate the next address options
-    adder branch_adder (.A(shifted_addr), .B(ex_program_counter), .sum(next_count_branch), .carryOut(), .overflow());
-    adder count_adder  (.A(program_counter), .B(64'h4), .sum(next_count), .carryOut(), .overflow());
+    adder branch_adder (.A(shifted_addr), .B(ex_program_counter), .sum(next_count_branch), .carry_out(), .overflow());
+    adder count_adder  (.A(program_counter), .B(64'h4), .sum(next_count), .carry_out(), .overflow());
 	
 	or #delay (ex_branch_taken_final, branch_taken, cbz_branch_taken);
 	

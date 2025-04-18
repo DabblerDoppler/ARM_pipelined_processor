@@ -17,7 +17,7 @@ module inverter #(parameter WIDTH=64) (in, out);
 	assign zero = 0;
 	assign one = 1;
 	
-	full_adder first_adder(.A(not_in[0]), .B(zero), .Cin(one), .Cout(carry[0]), .sum(out[0]));
+	full_adder first_adder(.A(not_in[0]), .B(zero), .c_in(one), .c_out(carry[0]), .sum(out[0]));
 
 	generate
 		for(i=0; i < WIDTH; i++) begin : invertLoop
@@ -27,7 +27,7 @@ module inverter #(parameter WIDTH=64) (in, out);
 		
 		for(i=1; i < WIDTH; i++) begin : addLoop
 			//add one
-			full_adder this_adder(.A(not_in[i]), .B(zero), .Cin(carry[i-1]), .Cout(carry[i]), .sum(out[i]));
+			full_adder this_adder(.A(not_in[i]), .B(zero), .c_in(carry[i-1]), .c_out(carry[i]), .sum(out[i]));
 		end
 		
 	endgenerate

@@ -48,7 +48,7 @@ module alu(A, B, cntrl, result, negative, zero, overflow, carry_out);
 		end
 	endgenerate
 	
-	adder alu_adder(.A(A), .B(add_sub_mux_out), .sum(add_result), .carryOut(carry_out), .overflow(overflow));
+	adder alu_adder(.A(A), .B(add_sub_mux_out), .sum(add_result), .carry_out(carry_out), .overflow(overflow));
 	
 	
 	

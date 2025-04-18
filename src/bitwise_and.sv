@@ -9,7 +9,6 @@ module bitwise_and #(parameter WIDTH=64) (A, B, out);
 	input logic[WIDTH-1:0] A, B;
 
 	output logic[WIDTH-1:0] out; 
-	
 
 	genvar i;
 		
